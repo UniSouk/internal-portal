@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { canApproveOperationalLevel, canApproveExecutiveLevel, canApproveDepartmentLevel } from '@/lib/roleAuthClient';
+import { useNotification } from './Notification';
 import OperationalRequestForm from './OperationalRequestForm';
 
 interface WorkflowItem {
@@ -33,6 +34,7 @@ interface ApprovalDashboardProps {
 }
 
 export default function ApprovalDashboard({ currentUserId }: ApprovalDashboardProps) {
+  const { showNotification } = useNotification();
   const [pendingWorkflows, setPendingWorkflows] = useState<WorkflowItem[]>([]);
   const [stats, setStats] = useState<WorkflowStats>({
     pendingApprovals: 0,
@@ -98,14 +100,14 @@ export default function ApprovalDashboard({ currentUserId }: ApprovalDashboardPr
 
       if (response.ok) {
         fetchDashboardData(); // Refresh data
-        alert('Request approved successfully!');
+        showNotification('success', 'Request Approved', 'The request has been successfully approved.');
       } else {
         const error = await response.json();
-        alert(`Failed to approve: ${error.error}`);
+        showNotification('error', 'Approval Failed', error.error || 'Failed to approve request');
       }
     } catch (error) {
       console.error('Error approving workflow:', error);
-      alert('Error approving request');
+      showNotification('error', 'Network Error', 'Unable to approve request. Please try again.');
     }
   };
 
@@ -126,14 +128,14 @@ export default function ApprovalDashboard({ currentUserId }: ApprovalDashboardPr
 
       if (response.ok) {
         fetchDashboardData(); // Refresh data
-        alert('Request rejected.');
+        showNotification('info', 'Request Rejected', 'The request has been rejected with the provided reason.');
       } else {
         const error = await response.json();
-        alert(`Failed to reject: ${error.error}`);
+        showNotification('error', 'Rejection Failed', error.error || 'Failed to reject request');
       }
     } catch (error) {
       console.error('Error rejecting workflow:', error);
-      alert('Error rejecting request');
+      showNotification('error', 'Network Error', 'Unable to reject request. Please try again.');
     }
   };
 

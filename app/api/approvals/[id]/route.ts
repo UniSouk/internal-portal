@@ -136,30 +136,17 @@ export async function PUT(
                 const resource = accessRequest.resource;
                 const employeeId = accessRequest.employee.id;
 
-                if (resource.type === 'PHYSICAL') {
-                  // Physical resources: single assignment (assignedToId)
-                  await prisma.resource.update({
-                    where: { id: resource.id },
-                    data: {
-                      assignedToId: employeeId,
-                      status: 'ASSIGNED',
-                      assignedDate: new Date()
-                    }
-                  });
-                } else {
-                  // Software/Cloud resources: multiple assignments (assignedToIds)
-                  const currentAssignedIds = resource.assignedToIds || [];
-                  if (!currentAssignedIds.includes(employeeId)) {
-                    await prisma.resource.update({
-                      where: { id: resource.id },
-                      data: {
-                        assignedToIds: [...currentAssignedIds, employeeId],
-                        status: 'ASSIGNED',
-                        assignedDate: new Date()
-                      }
-                    });
+                // Create a new resource assignment using the new system
+                await prisma.resourceAssignment.create({
+                  data: {
+                    resourceId: resource.id,
+                    employeeId: employeeId,
+                    quantityAssigned: 1,
+                    assignedBy: finalApproverId,
+                    status: 'ACTIVE',
+                    notes: `Assigned via access request approval - ${accessRequest.permissionLevel} access`
                   }
-                }
+                });
 
                 // Log resource assignment activity
                 await logTimelineActivity({
@@ -197,6 +184,9 @@ export async function PUT(
                 // Get system user as owner of the new resource
                 const systemUserId = await getSystemUserId();
                 
+                // Get CEO for custodian assignment
+                const ceo = await prisma.employee.findFirst({ where: { role: 'CEO' } });
+                
                 // Create new physical resource for the hardware request
                 const newResource = await prisma.resource.create({
                   data: {
@@ -204,11 +194,22 @@ export async function PUT(
                     type: 'PHYSICAL',
                     category: 'Hardware',
                     description: `Hardware requested via access request by ${accessRequest.employee.name}`,
-                    ownerId: systemUserId,
-                    assignedToId: employeeId,
-                    status: 'ASSIGNED',
-                    assignedDate: new Date(),
-                    permissionLevel: 'ADMIN' // Hardware typically gets admin-level access
+                    owner: 'Unisouk', // Company owns all resources
+                    custodianId: ceo?.id || systemUserId, // CEO is custodian, fallback to system user
+                    totalQuantity: 1,
+                    status: 'ACTIVE'
+                  }
+                });
+
+                // Create assignment for the requesting employee
+                await prisma.resourceAssignment.create({
+                  data: {
+                    resourceId: newResource.id,
+                    employeeId: employeeId,
+                    quantityAssigned: 1,
+                    assignedBy: systemUserId,
+                    status: 'ACTIVE',
+                    notes: 'Assigned via access request approval'
                   }
                 });
 

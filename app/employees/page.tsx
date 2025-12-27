@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { Edit, Eye, Link, KeyRound, Trash2 } from 'lucide-react';
 import EmployeeForm from '@/components/EmployeeForm';
 import EmployeeResources from '@/components/EmployeeResources';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Pagination from '@/components/Pagination';
+import { useNotification } from '@/components/Notification';
 import { Role, Status } from '@/types';
 
 interface Employee {
@@ -42,6 +44,13 @@ export default function EmployeesPage() {
   const [viewingDependencies, setViewingDependencies] = useState<string | null>(null);
   const [viewingResources, setViewingResources] = useState<{ id: string; name: string } | null>(null);
   const [dependencies, setDependencies] = useState<any>(null);
+  const [resetPasswordEmployee, setResetPasswordEmployee] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const { showNotification, NotificationComponent } = useNotification();
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -98,9 +107,19 @@ export default function EmployeesPage() {
           setEmployees(employees.map(emp => emp.id === editingEmployee.id ? updatedEmployee : emp));
           setShowForm(false);
           setEditingEmployee(null);
+          showNotification('success', 'Employee Updated', `${updatedEmployee.name} has been successfully updated.`);
         } else {
           const errorData = await response.json();
-          alert(`Failed to update employee: ${errorData.error}`);
+          console.error('Employee update failed:', errorData);
+          
+          // Show specific error message based on error type
+          if (errorData.code === 'DUPLICATE_EMAIL') {
+            showNotification('error', 'Email Already Exists', errorData.message || 'This email address is already registered. Please use a different email address.');
+          } else if (errorData.field === 'email') {
+            showNotification('error', 'Email Error', errorData.message || 'There was an issue with the email address provided.');
+          } else {
+            showNotification('error', 'Update Failed', errorData.message || errorData.error || 'Failed to update employee. Please try again.');
+          }
         }
       } else {
         // Create new employee
@@ -116,17 +135,27 @@ export default function EmployeesPage() {
           const newEmployee = await response.json();
           setEmployees([newEmployee, ...employees]);
           setShowForm(false);
+          showNotification('success', 'Employee Created', `${newEmployee.name} has been successfully created and will be redirected to resource assignment.`);
           
           // Redirect to resource assignment page for the new employee
           router.push(`/employees/${newEmployee.id}/assign-resources`);
         } else {
           const errorData = await response.json();
-          alert(`Failed to create employee: ${errorData.error}`);
+          console.error('Employee creation failed:', errorData);
+          
+          // Show specific error message based on error type
+          if (errorData.code === 'DUPLICATE_EMAIL') {
+            showNotification('error', 'Email Already Exists', errorData.message || 'This email address is already registered. Please use a different email address.');
+          } else if (errorData.field === 'email') {
+            showNotification('error', 'Email Error', errorData.message || 'There was an issue with the email address provided.');
+          } else {
+            showNotification('error', 'Creation Failed', errorData.message || errorData.error || 'Failed to create employee. Please try again.');
+          }
         }
       }
     } catch (error) {
       console.error('Error saving employee:', error);
-      alert('Error saving employee');
+      showNotification('error', 'Network Error', 'Unable to save employee. Please check your connection and try again.');
     } finally {
       setSubmitting(false);
     }
@@ -147,7 +176,7 @@ export default function EmployeesPage() {
     const availableEmployees = employees.filter(emp => emp.id !== fromEmployeeId);
     
     if (availableEmployees.length === 0) {
-      alert('No other employees available for reassignment');
+      showNotification('warning', 'No Employees Available', 'No other employees available for reassignment');
       return;
     }
 
@@ -159,7 +188,7 @@ export default function EmployeesPage() {
 
     const selectedEmployee = availableEmployees.find(emp => emp.name === selectedName);
     if (!selectedEmployee) {
-      alert('Employee not found. Please enter the exact name.');
+      showNotification('error', 'Employee Not Found', 'Employee not found. Please enter the exact name.');
       return;
     }
 
@@ -178,16 +207,16 @@ export default function EmployeesPage() {
 
       if (response.ok) {
         const result = await response.json();
-        alert(`Successfully reassigned ownership to ${result.toEmployee}:\n• ${result.reassigned.policies} policies\n• ${result.reassigned.documents} documents\n• ${result.reassigned.resources} resources\n• ${result.reassigned.subordinates} subordinates`);
+        showNotification('success', 'Ownership Reassigned', `Successfully reassigned ownership to ${result.toEmployee}: ${result.reassigned.policies} policies, ${result.reassigned.documents} documents, ${result.reassigned.resources} resources, ${result.reassigned.subordinates} subordinates`);
         // Refresh dependencies
         handleViewDependencies(fromEmployeeId);
       } else {
         const errorData = await response.json();
-        alert(`Failed to reassign ownership: ${errorData.error}`);
+        showNotification('error', 'Reassignment Failed', errorData.error || 'Failed to reassign ownership');
       }
     } catch (error) {
       console.error('Error reassigning ownership:', error);
-      alert('Error reassigning ownership');
+      showNotification('error', 'Network Error', 'Unable to reassign ownership. Please try again.');
     }
   };
 
@@ -199,11 +228,11 @@ export default function EmployeesPage() {
         setDependencies(data);
         setViewingDependencies(id);
       } else {
-        alert('Failed to load employee dependencies');
+        showNotification('error', 'Load Failed', 'Failed to load employee dependencies');
       }
     } catch (error) {
       console.error('Error loading dependencies:', error);
-      alert('Error loading dependencies');
+      showNotification('error', 'Network Error', 'Unable to load dependencies. Please try again.');
     }
   };
 
@@ -216,29 +245,79 @@ export default function EmployeesPage() {
       if (response.ok) {
         setEmployees(employees.filter(emp => emp.id !== id));
         setDeleteConfirm(null);
+        showNotification('success', 'Employee Deleted', 'Employee has been successfully deleted.');
       } else {
         const errorData = await response.json();
         
         // Show detailed error message if available
         if (errorData.details) {
           const details = errorData.details;
-          let detailMessage = 'This employee has the following associated records:\n';
-          if (details.policies > 0) detailMessage += `• ${details.policies} policies\n`;
-          if (details.documents > 0) detailMessage += `• ${details.documents} documents\n`;
-          if (details.resources > 0) detailMessage += `• ${details.resources} resources\n`;
-          if (details.accessRequests > 0) detailMessage += `• ${details.accessRequests} access requests\n`;
-          if (details.approvals > 0) detailMessage += `• ${details.approvals} approvals\n`;
-          if (details.workflows > 0) detailMessage += `• ${details.workflows} workflows\n`;
-          detailMessage += '\nPlease reassign or remove these records before deleting the employee.';
+          let detailMessage = 'This employee has associated records: ';
+          const items = [];
+          if (details.policies > 0) items.push(`${details.policies} policies`);
+          if (details.documents > 0) items.push(`${details.documents} documents`);
+          if (details.resources > 0) items.push(`${details.resources} resources`);
+          if (details.accessRequests > 0) items.push(`${details.accessRequests} access requests`);
+          if (details.approvals > 0) items.push(`${details.approvals} approvals`);
+          if (details.workflows > 0) items.push(`${details.workflows} workflows`);
+          detailMessage += items.join(', ') + '. Please reassign or remove these records first.';
           
-          alert(`${errorData.error}\n\n${detailMessage}`);
+          showNotification('error', 'Cannot Delete Employee', detailMessage);
         } else {
-          alert(`Failed to delete employee: ${errorData.error}`);
+          showNotification('error', 'Delete Failed', errorData.error || 'Failed to delete employee');
         }
       }
     } catch (error) {
       console.error('Error deleting employee:', error);
-      alert('Error deleting employee. Please try again.');
+      showNotification('error', 'Network Error', 'Unable to delete employee. Please try again.');
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!resetPasswordEmployee) return;
+    
+    if (newPassword !== confirmPassword) {
+      showNotification('error', 'Password Mismatch', 'Passwords do not match. Please try again.');
+      return;
+    }
+    
+    if (newPassword.length < 6) {
+      showNotification('error', 'Password Too Short', 'Password must be at least 6 characters long.');
+      return;
+    }
+    
+    setResetPasswordLoading(true);
+    
+    try {
+      const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          employeeId: resetPasswordEmployee.id,
+          newPassword: newPassword
+        }),
+      });
+
+      if (response.ok) {
+        showNotification('success', 'Password Reset', `Password has been successfully reset for ${resetPasswordEmployee.name}.`);
+        setResetPasswordEmployee(null);
+        setNewPassword('');
+        setConfirmPassword('');
+        setShowNewPassword(false);
+        setShowConfirmPassword(false);
+      } else {
+        const errorData = await response.json();
+        showNotification('error', 'Reset Failed', errorData.error || 'Failed to reset password');
+      }
+    } catch (error) {
+      console.error('Error resetting password:', error);
+      showNotification('error', 'Network Error', 'Unable to reset password. Please try again.');
+    } finally {
+      setResetPasswordLoading(false);
     }
   };
 
@@ -289,6 +368,7 @@ export default function EmployeesPage() {
 
   return (
     <ProtectedRoute requiredRoles={['CEO', 'CTO']}>
+      {NotificationComponent}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
@@ -311,8 +391,8 @@ export default function EmployeesPage() {
       <div className="mt-8 flex flex-col">
         <div className="-my-2 -mx-4 overflow-x-auto sm:-mx-6 lg:-mx-8">
           <div className="inline-block min-w-full py-2 align-middle md:px-6 lg:px-8">
-            <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-              <table className="min-w-full divide-y divide-gray-300">
+            <div className="overflow-hidden bg-white shadow-sm rounded-lg">
+              <table className="min-w-full">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -341,72 +421,158 @@ export default function EmployeesPage() {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {employees.map((employee) => (
-                    <tr key={employee.id}>
+                <tbody className="bg-white">
+                  {employees.map((employee, index) => (
+                    <tr key={employee.id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className="flex-shrink-0 h-10 w-10">
-                            <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
-                              <span className="text-sm font-medium text-gray-700">
+                            <div className="h-10 w-10 rounded-full bg-gradient-to-r from-blue-500 to-blue-600 flex items-center justify-center">
+                              <span className="text-sm font-medium text-white">
                                 {employee.name.charAt(0).toUpperCase()}
                               </span>
                             </div>
                           </div>
                           <div className="ml-4">
                             <div className="text-sm font-medium text-gray-900">{employee.name}</div>
-                            <div className="text-sm text-gray-500">{employee.email}</div>
+                            <div className="text-sm text-gray-500 flex items-center">
+                              <svg className="h-3 w-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+                              </svg>
+                              {employee.email}
+                            </div>
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getRoleColor(employee.role)}`}>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 text-xs font-medium rounded-full ${getRoleColor(employee.role)}`}>
+                          <svg className="h-3 w-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2-2v2m8 0V6a2 2 0 012 2v6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m-8 0h8" />
+                          </svg>
                           {employee.role.replace(/_/g, ' ')}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {employee.department}
+                        <div className="flex items-center">
+                          <svg className="h-4 w-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                          </svg>
+                          {employee.department}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {employee.manager ? employee.manager.name : '-'}
+                        {employee.manager ? (
+                          <div className="flex items-center">
+                            <svg className="h-4 w-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                            </svg>
+                            {employee.manager.name}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(employee.status)}`}>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 text-xs font-medium rounded-full ${getStatusColor(employee.status)}`}>
+                          {employee.status === 'ACTIVE' && (
+                            <svg className="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                          {employee.status === 'INACTIVE' && (
+                            <svg className="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                            </svg>
+                          )}
                           {employee.status}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {employee.phone || '-'}
+                        {employee.phone ? (
+                          <div className="flex items-center">
+                            <svg className="h-4 w-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                            </svg>
+                            {employee.phone}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {new Date(employee.joiningDate).toLocaleDateString()}
+                        <div className="flex items-center">
+                          <svg className="h-4 w-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          {new Date(employee.joiningDate).toLocaleDateString()}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div className="flex space-x-2">
-                          <button 
-                            onClick={() => handleEditEmployee(employee)}
-                            className="text-blue-600 hover:text-blue-900"
-                          >
-                            Edit
-                          </button>
-                          <button 
-                            onClick={() => setViewingResources({ id: employee.id, name: employee.name })}
-                            className="text-purple-600 hover:text-purple-900"
-                          >
-                            Resources
-                          </button>
-                          <button 
-                            onClick={() => handleViewDependencies(employee.id)}
-                            className="text-green-600 hover:text-green-900"
-                          >
-                            Dependencies
-                          </button>
-                          <button 
-                            onClick={() => setDeleteConfirm(employee.id)}
-                            className="text-red-600 hover:text-red-900"
-                          >
-                            Delete
-                          </button>
+                        <div className="flex items-center space-x-2">
+                          {/* Edit Employee */}
+                          <div className="relative group">
+                            <button 
+                              onClick={() => handleEditEmployee(employee)}
+                              className="inline-flex items-center justify-center w-8 h-8 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-full transition-colors"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                              Edit Employee
+                            </div>
+                          </div>
+
+                          {/* View Resources */}
+                          {/* <div className="relative group">
+                            <button 
+                              onClick={() => setViewingResources({ id: employee.id, name: employee.name })}
+                              className="inline-flex items-center justify-center w-8 h-8 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-full transition-colors"
+                            >
+                              <Eye size={16} />
+                            </button>
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                              View Resources
+                            </div>
+                          </div> */}
+
+                          {/* View Dependencies */}
+                          <div className="relative group">
+                            <button 
+                              onClick={() => handleViewDependencies(employee.id)}
+                              className="inline-flex items-center justify-center w-8 h-8 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-full transition-colors"
+                            >
+                              <Link size={16} />
+                            </button>
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                              View Dependencies
+                            </div>
+                          </div>
+
+                          {/* Reset Password */}
+                          <div className="relative group">
+                            <button 
+                              onClick={() => setResetPasswordEmployee({ id: employee.id, name: employee.name, email: employee.email })}
+                              className="inline-flex items-center justify-center w-8 h-8 text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded-full transition-colors"
+                            >
+                              <KeyRound size={16} />
+                            </button>
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                              Reset Password
+                            </div>
+                          </div>
+
+                          {/* Delete Employee */}
+                          <div className="relative group">
+                            <button 
+                              onClick={() => setDeleteConfirm(employee.id)}
+                              className="inline-flex items-center justify-center w-8 h-8 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-full transition-colors"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                              Delete Employee
+                            </div>
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -604,6 +770,168 @@ export default function EmployeesPage() {
           isOpen={!!viewingResources}
           onClose={() => setViewingResources(null)}
         />
+      )}
+
+      {/* Password Reset Modal */}
+      {resetPasswordEmployee && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-gray-900">Reset Password</h3>
+                <button
+                  onClick={() => {
+                    setResetPasswordEmployee(null);
+                    setNewPassword('');
+                    setConfirmPassword('');
+                    setShowNewPassword(false);
+                    setShowConfirmPassword(false);
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+                  <div className="flex">
+                    <div className="flex-shrink-0">
+                      <svg className="h-5 w-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <div className="ml-3">
+                      <p className="text-sm text-blue-800">
+                        <strong>Employee:</strong> {resetPasswordEmployee.name}<br />
+                        <strong>Email:</strong> {resetPasswordEmployee.email}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <form onSubmit={handleResetPassword}>
+                <div className="mb-4">
+                  <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-2">
+                    New Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="newPassword"
+                      type={showNewPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Enter new password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer hover:bg-gray-100 rounded-r-md transition-colors duration-200"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                    >
+                      {showNewPassword ? (
+                        <svg className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 11-4.243-4.243m4.242 4.242L9.88 9.88" />
+                        </svg>
+                      ) : (
+                        <svg className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Password must be at least 6 characters long.
+                  </p>
+                </div>
+
+                <div className="mb-4">
+                  <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">
+                    Confirm Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="confirmPassword"
+                      type={showConfirmPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Confirm new password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer hover:bg-gray-100 rounded-r-md transition-colors duration-200"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    >
+                      {showConfirmPassword ? (
+                        <svg className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 11-4.243-4.243m4.242 4.242L9.88 9.88" />
+                        </svg>
+                      ) : (
+                        <svg className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                  {confirmPassword && newPassword !== confirmPassword && (
+                    <p className="mt-1 text-xs text-red-600">
+                      Passwords do not match.
+                    </p>
+                  )}
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
+                  <div className="flex">
+                    <div className="flex-shrink-0">
+                      <svg className="h-5 w-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                      </svg>
+                    </div>
+                    <div className="ml-3">
+                      <p className="text-sm text-yellow-800">
+                        <strong>Warning:</strong> This will immediately change the employee's password. 
+                        They will need to use the new password to log in.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetPasswordEmployee(null);
+                      setNewPassword('');
+                      setConfirmPassword('');
+                      setShowNewPassword(false);
+                      setShowConfirmPassword(false);
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={resetPasswordLoading || newPassword !== confirmPassword || newPassword.length < 6}
+                    className="px-4 py-2 text-sm font-medium text-white bg-orange-600 hover:bg-orange-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {resetPasswordLoading ? 'Resetting...' : 'Reset Password'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
       )}
     </div>
     </ProtectedRoute>

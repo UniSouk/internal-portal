@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import AccessRequestForm from '@/components/AccessRequestForm';
+import { useNotification } from '@/components/Notification';
 
 interface AccessRequest {
   id: string;
@@ -36,11 +37,11 @@ interface AccessRequest {
 export default function AccessPage() {
   const { user } = useAuth();
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
-  const [resources, setResources] = useState<Array<{ id: string; name: string; type: string }>>([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const { showNotification, NotificationComponent } = useNotification();
 
   const isCEOOrCTO = user?.role === 'CEO' || user?.role === 'CTO';
 
@@ -60,23 +61,8 @@ export default function AccessPage() {
     }
   };
 
-  const fetchResources = async () => {
-    try {
-      const response = await fetch('/api/resources');
-      if (response.ok) {
-        const data = await response.json();
-        // Handle paginated response structure
-        const resourcesArray = data.resources || data; // Support both paginated and direct array responses
-        setResources(Array.isArray(resourcesArray) ? resourcesArray : []);
-      }
-    } catch (error) {
-      console.error('Error fetching resources:', error);
-    }
-  };
-
   const handleLoadData = () => {
     fetchAccessRequests();
-    fetchResources();
   };
 
   const handleCreateAccessRequest = async (requestData: any) => {
@@ -96,14 +82,14 @@ export default function AccessPage() {
         setDataLoaded(true); // Mark data as loaded after creating a request
         
         // Show success message with workflow info
-        alert(`Access request created successfully! An approval workflow has been automatically created and sent to the appropriate manager.`);
+        showNotification('success', 'Request Submitted', 'Access request created successfully! An approval workflow has been automatically created and sent to the appropriate manager.');
       } else {
         const errorData = await response.json();
-        alert(`Failed to create access request: ${errorData.error}`);
+        showNotification('error', 'Request Failed', errorData.error || 'Failed to create access request');
       }
     } catch (error) {
       console.error('Error creating access request:', error);
-      alert('Error creating access request');
+      showNotification('error', 'Network Error', 'Unable to create access request. Please check your connection and try again.');
     }
   };
 
@@ -116,14 +102,14 @@ export default function AccessPage() {
       if (response.ok) {
         setAccessRequests(accessRequests.filter(request => request.id !== accessId));
         setDeleteConfirm(null);
-        alert('Access request deleted successfully!');
+        showNotification('success', 'Request Deleted', 'Access request has been successfully deleted.');
       } else {
         const errorData = await response.json();
-        alert(`Failed to delete access request: ${errorData.error}`);
+        showNotification('error', 'Delete Failed', errorData.error || 'Failed to delete access request');
       }
     } catch (error) {
       console.error('Error deleting access request:', error);
-      alert('Error deleting access request');
+      showNotification('error', 'Network Error', 'Unable to delete access request. Please try again.');
     }
   };
 
@@ -158,7 +144,9 @@ export default function AccessPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <>
+      {NotificationComponent}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
           <h1 className="text-2xl font-semibold text-gray-900">Access Management</h1>
@@ -195,12 +183,7 @@ export default function AccessPage() {
           </button>
           <button
             type="button"
-            onClick={() => {
-              if (resources.length === 0) {
-                fetchResources();
-              }
-              setShowForm(true);
-            }}
+            onClick={() => setShowForm(true)}
             className="inline-flex items-center justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:w-auto"
           >
             Request Access
@@ -366,9 +349,9 @@ export default function AccessPage() {
         <AccessRequestForm
           onSubmit={handleCreateAccessRequest}
           onCancel={() => setShowForm(false)}
-          resources={resources}
         />
       )}
-    </div>
+      </div>
+    </>
   );
 }

@@ -54,10 +54,10 @@ export async function POST(request: NextRequest) {
         data: { ownerId: toEmployeeId }
       });
 
-      // Reassign resources
+      // Reassign resource custodianship
       const resources = await tx.resource.updateMany({
-        where: { ownerId: fromEmployeeId },
-        data: { ownerId: toEmployeeId }
+        where: { custodianId: fromEmployeeId },
+        data: { custodianId: toEmployeeId }
       });
 
       // Reassign subordinates (change their manager)

@@ -20,10 +20,13 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '12');
+    const search = searchParams.get('search'); // Add search parameter
+    const category = searchParams.get('category'); // Add category filter
+    const status = searchParams.get('status'); // Add status filter
     const skip = (page - 1) * limit;
 
     // Build where clause based on user role
-    let whereClause = {};
+    let whereClause: any = {};
     
     // CEO and CTO can see all policies
     if (currentUser.role === 'CEO' || currentUser.role === 'CTO') {
@@ -34,6 +37,73 @@ export async function GET(request: NextRequest) {
       whereClause = {
         ownerId: currentUser.id
       };
+    }
+
+    // Add search filter if specified
+    if (search && search.trim()) {
+      const searchConditions = {
+        OR: [
+          { title: { contains: search.trim(), mode: 'insensitive' as any } },
+          { content: { contains: search.trim(), mode: 'insensitive' as any } },
+          { fileName: { contains: search.trim(), mode: 'insensitive' as any } }
+        ]
+      };
+
+      // Combine search with existing conditions
+      const existingConditions = [];
+      
+      // Add role-based conditions
+      if (currentUser.role !== 'CEO' && currentUser.role !== 'CTO') {
+        existingConditions.push({ ownerId: currentUser.id });
+      }
+      
+      // Add category filter
+      if (category) {
+        existingConditions.push({ category: category });
+      }
+      
+      // Add status filter
+      if (status) {
+        existingConditions.push({ status: status });
+      }
+      
+      // Combine all conditions
+      if (existingConditions.length > 0) {
+        whereClause = {
+          AND: [
+            ...existingConditions,
+            searchConditions
+          ]
+        };
+      } else {
+        whereClause = searchConditions;
+      }
+    } else {
+      // No search, just apply other filters
+      const conditions = [];
+      
+      // Add role-based conditions
+      if (currentUser.role !== 'CEO' && currentUser.role !== 'CTO') {
+        conditions.push({ ownerId: currentUser.id });
+      }
+      
+      // Add category filter
+      if (category) {
+        conditions.push({ category: category });
+      }
+      
+      // Add status filter
+      if (status) {
+        conditions.push({ status: status });
+      }
+      
+      if (conditions.length > 1) {
+        whereClause = { AND: conditions };
+      } else if (conditions.length === 1) {
+        whereClause = conditions[0];
+      } else {
+        whereClause = {};
+      }
     }
 
     // Get total count with role-based filtering
@@ -192,12 +262,43 @@ export async function POST(request: NextRequest) {
     // Automatically create publish workflow if policy is ready for review
     if (policy.status === 'REVIEW' && (policy.content || policy.filePath)) {
       try {
+        console.log(`Policy "${policy.title}" created with REVIEW status - creating approval workflow`);
+        console.log(`Policy has content: ${!!policy.content}, has file: ${!!policy.filePath}`);
+        
         const workflow = await createPolicyPublishWorkflow(policy.id, finalOwnerId);
-        console.log(`Automatic publish workflow created for new policy: ${workflow.id}`);
+        console.log(`✅ Automatic publish workflow created for new policy: ${workflow.id}`);
+        
+        // Log workflow creation in timeline
+        await logTimelineActivity({
+          entityType: 'POLICY',
+          entityId: policy.id,
+          activityType: 'WORKFLOW_STARTED',
+          title: `Policy review workflow created`,
+          description: `Approval workflow automatically created for new policy "${policy.title}" with REVIEW status`,
+          metadata: {
+            workflowId: workflow.id,
+            policyTitle: policy.title,
+            workflowType: 'POLICY_UPDATE_REQUEST',
+            autoCreated: true
+          },
+          performedBy: finalOwnerId,
+          policyId: policy.id,
+          workflowId: workflow.id
+        });
+        
       } catch (workflowError) {
-        console.error('Failed to create automatic publish workflow:', workflowError);
+        console.error('❌ Failed to create automatic publish workflow for new policy:', workflowError);
+        console.error('Policy ID:', policy.id);
+        console.error('Policy Title:', policy.title);
+        console.error('Requester ID:', finalOwnerId);
+        console.error('Full error:', workflowError);
         // Don't fail the policy creation if workflow creation fails
       }
+    } else {
+      console.log(`Policy "${policy.title}" created but workflow not needed:`);
+      console.log(`- Status: ${policy.status} (needs REVIEW)`);
+      console.log(`- Has content: ${!!policy.content}`);
+      console.log(`- Has file: ${!!policy.filePath}`);
     }
 
     return NextResponse.json(policy, { status: 201 });
@@ -309,7 +410,8 @@ export async function PUT(request: NextRequest) {
     // Check if status changed to REVIEW - create approval workflow
     if (currentPolicy.status !== 'REVIEW' && body.status === 'REVIEW') {
       try {
-        console.log(`Policy ${updatedPolicy.title} moved to REVIEW status - creating approval workflow`);
+        console.log(`Policy "${updatedPolicy.title}" moved to REVIEW status - creating approval workflow`);
+        console.log(`Policy has content: ${!!updatedPolicy.content}, has file: ${!!updatedPolicy.filePath}`);
         
         const systemUserId = await getSystemUserId();
         const workflowRequesterId = updatedPolicy.ownerId || currentPolicy.ownerId || systemUserId;
@@ -334,9 +436,16 @@ export async function PUT(request: NextRequest) {
           workflowId: workflow.id
         });
 
-        console.log(`Policy approval workflow created: ${workflow.id}`);
+        console.log(`✅ Policy approval workflow created: ${workflow.id}`);
       } catch (workflowError) {
-        console.error('Failed to create policy approval workflow:', workflowError);
+        const systemUserId = await getSystemUserId();
+        const workflowRequesterId = updatedPolicy.ownerId || currentPolicy.ownerId || systemUserId;
+        
+        console.error('❌ Failed to create policy approval workflow:', workflowError);
+        console.error('Policy ID:', updatedPolicy.id);
+        console.error('Policy Title:', updatedPolicy.title);
+        console.error('Requester ID:', workflowRequesterId);
+        console.error('Full error:', workflowError);
         // Don't fail the policy update if workflow creation fails
       }
     }

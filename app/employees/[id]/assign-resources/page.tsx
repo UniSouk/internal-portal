@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import { useNotification } from '@/components/Notification';
 
 interface Resource {
   id: string;
@@ -29,11 +30,21 @@ export default function AssignResourcesPage() {
   const router = useRouter();
   const params = useParams();
   const { user } = useAuth();
+  const { showNotification, NotificationComponent } = useNotification();
   const employeeId = params.id as string;
 
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [resources, setResources] = useState<Resource[]>([]);
   const [selectedResources, setSelectedResources] = useState<{
+    physical: string[];
+    software: string[];
+    cloud: string[];
+  }>({
+    physical: [],
+    software: [],
+    cloud: []
+  });
+  const [autoSelectedResources, setAutoSelectedResources] = useState<{
     physical: string[];
     software: string[];
     cloud: string[];
@@ -50,6 +61,149 @@ export default function AssignResourcesPage() {
       fetchEmployeeAndResources();
     }
   }, [employeeId]);
+
+  // Auto-select resources based on employee department
+  useEffect(() => {
+    if (employee && resources.length > 0) {
+      autoSelectResourcesByDepartment();
+    }
+  }, [employee, resources]);
+
+  const autoSelectResourcesByDepartment = () => {
+    if (!employee) return;
+
+    const autoSelections = getAutoSelectionsByDepartment(employee.department, employee.role);
+    
+    // Find matching resources and auto-select them
+    const physicalSelections: string[] = [];
+    const softwareSelections: string[] = [];
+    const cloudSelections: string[] = [];
+
+    autoSelections.forEach(selection => {
+      const matchingResources = resources.filter(resource => 
+        resource.type === selection.type && 
+        resource.name.toLowerCase().includes(selection.namePattern.toLowerCase())
+      );
+
+      matchingResources.forEach(resource => {
+        if (selection.type === 'PHYSICAL') {
+          physicalSelections.push(resource.id);
+        } else if (selection.type === 'SOFTWARE') {
+          softwareSelections.push(resource.id);
+        } else if (selection.type === 'CLOUD') {
+          cloudSelections.push(resource.id);
+        }
+      });
+    });
+
+    // Update selected resources with auto-selections
+    setSelectedResources({
+      physical: physicalSelections,
+      software: softwareSelections,
+      cloud: cloudSelections
+    });
+
+    // Track which resources were auto-selected
+    setAutoSelectedResources({
+      physical: physicalSelections,
+      software: softwareSelections,
+      cloud: cloudSelections
+    });
+
+    // Show notification about auto-selection
+    if (physicalSelections.length > 0 || softwareSelections.length > 0 || cloudSelections.length > 0) {
+      const totalSelected = physicalSelections.length + softwareSelections.length + cloudSelections.length;
+      showNotification(
+        'info', 
+        'Resources Auto-Selected', 
+        `${totalSelected} resources have been automatically selected based on ${employee.name}'s department (${employee.department}) and role (${employee.role.replace(/_/g, ' ')}). You can modify the selection as needed.`
+      );
+    }
+  };
+
+  const getAutoSelectionsByDepartment = (department: string, role: string) => {
+    const selections: Array<{type: 'PHYSICAL' | 'SOFTWARE' | 'CLOUD', namePattern: string}> = [];
+
+    // Common resources for all employees
+    selections.push(
+      { type: 'PHYSICAL', namePattern: 'Wireless Mouse' },
+      { type: 'PHYSICAL', namePattern: 'Laptop Bag' },
+      { type: 'SOFTWARE', namePattern: 'Google Workspace' },
+      { type: 'SOFTWARE', namePattern: 'Slack Pro' },
+      { type: 'CLOUD', namePattern: 'Zoom Pro' }
+    );
+
+    // Department-specific selections
+    switch (department.toLowerCase()) {
+      case 'engineering':
+      case 'technology':
+        selections.push(
+          { type: 'PHYSICAL', namePattern: 'MacBook Pro' },
+          { type: 'PHYSICAL', namePattern: 'LG UltraWide Monitor' },
+          { type: 'PHYSICAL', namePattern: 'Mechanical Keyboard' },
+          { type: 'SOFTWARE', namePattern: 'JetBrains IntelliJ' },
+          { type: 'SOFTWARE', namePattern: 'GitHub Enterprise' },
+          { type: 'CLOUD', namePattern: 'AWS Development' }
+        );
+        
+        // Role-specific additions for engineering
+        if (role.includes('FRONTEND') || role.includes('DESIGNER')) {
+          selections.push({ type: 'SOFTWARE', namePattern: 'Figma Professional' });
+        }
+        if (role.includes('CREATIVE') || role.includes('DESIGNER')) {
+          selections.push({ type: 'SOFTWARE', namePattern: 'Adobe Creative' });
+        }
+        break;
+
+      case 'design':
+      case 'creative':
+        selections.push(
+          { type: 'PHYSICAL', namePattern: 'MacBook Pro' },
+          { type: 'PHYSICAL', namePattern: 'LG UltraWide Monitor' },
+          { type: 'SOFTWARE', namePattern: 'Figma Professional' },
+          { type: 'SOFTWARE', namePattern: 'Adobe Creative' }
+        );
+        break;
+
+      case 'sales':
+      case 'marketing':
+        selections.push(
+          { type: 'PHYSICAL', namePattern: 'Dell XPS' },
+          { type: 'PHYSICAL', namePattern: 'iPhone' },
+          { type: 'SOFTWARE', namePattern: 'Microsoft Office' }
+        );
+        break;
+
+      case 'human resources':
+      case 'hr':
+        selections.push(
+          { type: 'PHYSICAL', namePattern: 'Dell XPS' },
+          { type: 'SOFTWARE', namePattern: 'Microsoft Office' }
+        );
+        break;
+
+      case 'finance':
+      case 'accounting':
+        selections.push(
+          { type: 'PHYSICAL', namePattern: 'Dell XPS' },
+          { type: 'SOFTWARE', namePattern: 'Microsoft Office' }
+        );
+        break;
+
+      default:
+        // General office worker
+        selections.push(
+          { type: 'PHYSICAL', namePattern: 'Dell XPS' },
+          { type: 'SOFTWARE', namePattern: 'Microsoft Office' }
+        );
+        break;
+    }
+
+    // Common office furniture for all employees
+    selections.push({ type: 'PHYSICAL', namePattern: 'Herman Miller' });
+
+    return selections;
+  };
 
   const fetchEmployeeAndResources = async () => {
     try {
@@ -94,7 +248,7 @@ export default function AssignResourcesPage() {
     ];
 
     if (allSelectedIds.length === 0) {
-      alert('Please select at least one resource to assign');
+      showNotification('warning', 'No Resources Selected', 'Please select at least one resource to assign');
       setAssigning(false);
       return;
     }
@@ -102,36 +256,86 @@ export default function AssignResourcesPage() {
     try {
       const assignmentPromises = allSelectedIds.map(async (resourceId) => {
         const resource = resources.find(r => r.id === resourceId);
-        if (!resource) return;
+        if (!resource) {
+          console.error('Resource not found in local state:', resourceId);
+          return { ok: false, error: 'Resource not found in local state' };
+        }
 
         const assignmentData = {
           resourceId,
           employeeId: employee.id,
-          assignmentType: resource.type === 'PHYSICAL' ? 'single' : 'multiple'
+          quantityRequested: 1, // Default to 1 unit
+          notes: `Auto-assigned during onboarding for ${employee.department} department`
         };
 
-        return fetch('/api/resources/assign', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(assignmentData)
-        });
+        console.log('Assigning resource:', resource.name, 'to employee:', employee.name);
+        console.log('Assignment data:', assignmentData);
+
+        try {
+          const response = await fetch('/api/resources/assign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(assignmentData)
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            console.error('Assignment failed for resource:', resource.name, errorData);
+            return { ok: false, error: errorData.error, details: errorData.details };
+          }
+
+          const result = await response.json();
+          console.log('Assignment successful for resource:', resource.name, result);
+          return { ok: true, result };
+        } catch (error) {
+          console.error('Network error during assignment:', error);
+          return { ok: false, error: 'Network error' };
+        }
       });
 
       const results = await Promise.all(assignmentPromises);
-      const successCount = results.filter(r => r?.ok).length;
-      const failureCount = results.length - successCount;
+      const successResults = results.filter(r => r?.ok);
+      const failureResults = results.filter(r => r && !r.ok);
+      
+      console.log('Assignment results:', {
+        total: results.length,
+        successful: successResults.length,
+        failed: failureResults.length,
+        failures: failureResults
+      });
 
-      if (successCount > 0) {
-        alert(`Successfully assigned ${successCount} resources to ${employee.name}${failureCount > 0 ? `. ${failureCount} assignments failed.` : '.'}`);
+      if (successResults.length > 0) {
+        let message = `Successfully assigned ${successResults.length} resources to ${employee.name}`;
+        
+        if (failureResults.length > 0) {
+          message += `\n\nFailed assignments (${failureResults.length}):`;
+          failureResults.forEach((failure, index) => {
+            if (failure.error) {
+              message += `\n• ${failure.error}`;
+            }
+          });
+        }
+        
+        showNotification('success', 'Resources Assigned', message);
         
         // Redirect back to employees page
         router.push('/employees');
       } else {
-        alert('Failed to assign resources. Please try again.');
+        let errorMessage = 'Failed to assign resources. Please try again.';
+        
+        if (failureResults.length > 0 && failureResults[0].error) {
+          errorMessage = `Assignment failed: ${failureResults[0].error}`;
+          
+          if (failureResults.length > 1) {
+            errorMessage += ` (and ${failureResults.length - 1} other error${failureResults.length > 2 ? 's' : ''})`;
+          }
+        }
+        
+        showNotification('error', 'Assignment Failed', errorMessage);
       }
     } catch (error) {
       console.error('Error assigning resources:', error);
-      alert('Error assigning resources');
+      showNotification('error', 'Network Error', 'Unable to assign resources. Please check your connection and try again.');
     } finally {
       setAssigning(false);
     }
@@ -183,6 +387,7 @@ export default function AssignResourcesPage() {
 
   return (
     <ProtectedRoute>
+      {NotificationComponent}
       <div className="min-h-screen bg-gray-50 py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           {/* Header */}
@@ -216,6 +421,28 @@ export default function AssignResourcesPage() {
               </div>
             </div>
           </div>
+
+          {/* Auto-Selection Info Banner */}
+          {employee && (autoSelectedResources.physical.length > 0 || autoSelectedResources.software.length > 0 || autoSelectedResources.cloud.length > 0) && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-6">
+              <div className="flex items-start">
+                <svg className="h-5 w-5 text-indigo-400 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                <div className="ml-3">
+                  <h4 className="text-sm font-medium text-indigo-800">Smart Resource Selection</h4>
+                  <div className="mt-1 text-sm text-indigo-700">
+                    Based on <strong>{employee.name}'s</strong> department (<strong>{employee.department}</strong>) and role (<strong>{employee.role.replace(/_/g, ' ')}</strong>), 
+                    we've automatically selected <strong>{autoSelectedResources.physical.length + autoSelectedResources.software.length + autoSelectedResources.cloud.length} essential resources</strong>. 
+                    You can modify this selection by checking or unchecking items below.
+                  </div>
+                  <div className="mt-2 text-xs text-indigo-600">
+                    💡 Auto-selected resources are marked with badges and can be customized as needed.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Resource Categories */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -251,11 +478,20 @@ export default function AssignResourcesPage() {
                         className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                       />
                       <label htmlFor={`physical-${resource.id}`} className="ml-3 flex-1 cursor-pointer">
-                        <div className="text-sm font-medium text-gray-900">{resource.name}</div>
-                        <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
-                        {resource.description && (
-                          <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
-                        )}
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-gray-900">{resource.name}</div>
+                            <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
+                            {resource.description && (
+                              <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
+                            )}
+                          </div>
+                          {autoSelectedResources.physical.includes(resource.id) && (
+                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                              Auto-selected
+                            </span>
+                          )}
+                        </div>
                       </label>
                     </div>
                   ))}
@@ -298,11 +534,20 @@ export default function AssignResourcesPage() {
                         className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
                       />
                       <label htmlFor={`software-${resource.id}`} className="ml-3 flex-1 cursor-pointer">
-                        <div className="text-sm font-medium text-gray-900">{resource.name}</div>
-                        <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
-                        {resource.description && (
-                          <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
-                        )}
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-gray-900">{resource.name}</div>
+                            <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
+                            {resource.description && (
+                              <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
+                            )}
+                          </div>
+                          {autoSelectedResources.software.includes(resource.id) && (
+                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                              Auto-selected
+                            </span>
+                          )}
+                        </div>
                       </label>
                     </div>
                   ))}
@@ -345,11 +590,20 @@ export default function AssignResourcesPage() {
                         className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
                       />
                       <label htmlFor={`cloud-${resource.id}`} className="ml-3 flex-1 cursor-pointer">
-                        <div className="text-sm font-medium text-gray-900">{resource.name}</div>
-                        <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
-                        {resource.description && (
-                          <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
-                        )}
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-gray-900">{resource.name}</div>
+                            <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
+                            {resource.description && (
+                              <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
+                            )}
+                          </div>
+                          {autoSelectedResources.cloud.includes(resource.id) && (
+                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                              Auto-selected
+                            </span>
+                          )}
+                        </div>
                       </label>
                     </div>
                   ))}

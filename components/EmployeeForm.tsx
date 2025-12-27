@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Role } from '@/types';
+import ElegantSelect from '@/components/ElegantSelect';
 
 interface EmployeeFormProps {
   onSubmit: (data: any) => void;
@@ -23,8 +24,32 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
     phone: editingEmployee?.phone || ''
   });
 
+  const [emailError, setEmailError] = useState('');
+
+  const validateEmail = (email: string) => {
+    // Check if email is already taken by another employee
+    const existingEmployee = employees.find(emp => 
+      emp.email.toLowerCase() === email.toLowerCase() && 
+      emp.id !== editingEmployee?.id
+    );
+    
+    if (existingEmployee) {
+      setEmailError('This email address is already registered to another employee');
+      return false;
+    }
+    
+    setEmailError('');
+    return true;
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate email before submission
+    if (!validateEmail(formData.email)) {
+      return;
+    }
+    
     onSubmit({
       ...formData,
       id: editingEmployee?.id,
@@ -34,10 +59,17 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [name]: value
     });
+    
+    // Validate email on change
+    if (name === 'email') {
+      validateEmail(value);
+    }
   };
 
   // Filter potential managers (exclude current employee)
@@ -47,11 +79,11 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
 
   // Group roles by category for better UX
   const roleCategories = {
-    'Executive': [Role.CEO, Role.CTO, Role.CFO, Role.COO],
-    'Management': [Role.ENGINEERING_MANAGER, Role.PRODUCT_MANAGER, Role.SALES_MANAGER, Role.HR_MANAGER, Role.MARKETING_MANAGER],
-    'Development': [Role.FRONTEND_DEVELOPER, Role.BACKEND_DEVELOPER, Role.FULLSTACK_DEVELOPER, Role.MOBILE_DEVELOPER, Role.DEVOPS_ENGINEER, Role.QA_ENGINEER],
-    'Technical': [Role.DATA_SCIENTIST, Role.UI_UX_DESIGNER, Role.SYSTEM_ADMINISTRATOR, Role.SECURITY_ENGINEER],
-    'Business': [Role.SALES_REPRESENTATIVE, Role.BUSINESS_ANALYST, Role.MARKETING_SPECIALIST, Role.HR_SPECIALIST, Role.ACCOUNTANT],
+    'Executive': [Role.CEO, Role.CTO],
+    'Management': [Role.ENGINEERING_MANAGER, Role.PRODUCT_MANAGER, Role.SALES_MANAGER, Role.HR_MANAGER],
+    'Development': [Role.FRONTEND_DEVELOPER, Role.BACKEND_DEVELOPER, Role.FULLSTACK_DEVELOPER, Role.DEVOPS_ENGINEER, Role.QA_ENGINEER],
+    'Technical': [Role.UI_UX_DESIGNER, Role.SYSTEM_ADMINISTRATOR, Role.SECURITY_ENGINEER],
+    'Business': [Role.SALES_REPRESENTATIVE, Role.BUSINESS_ANALYST, Role.MARKETING_SPECIALIST, Role.ACCOUNTANT],
     'Entry Level': [Role.INTERN, Role.JUNIOR_DEVELOPER, Role.TRAINEE],
     'General': [Role.ADMIN, Role.EMPLOYEE]
   };
@@ -88,18 +120,27 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
                     value={formData.email}
                     onChange={handleChange}
                     required
-                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    className={`mt-1 block w-full border rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+                      emailError ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                    }`}
                   />
+                  {emailError && (
+                    <p className="mt-1 text-sm text-red-600 flex items-center">
+                      <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {emailError}
+                    </p>
+                  )}
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Phone Number</label>
                   <input
-                    type="tel"
+                    type="number"
                     name="phone"
                     value={formData.phone}
                     onChange={handleChange}
-                    placeholder="+1 (555) 123-4567"
                     className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -124,22 +165,22 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Role *</label>
-                  <select
-                    name="role"
+                  <ElegantSelect
+                    options={Object.entries(roleCategories).flatMap(([category, roles]) => [
+                      { value: `category-${category}`, label: category, disabled: true },
+                      ...roles.map(role => ({
+                        value: role,
+                        label: role.replace(/_/g, ' '),
+                        description: category
+                      }))
+                    ])}
                     value={formData.role}
-                    onChange={handleChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {Object.entries(roleCategories).map(([category, roles]) => (
-                      <optgroup key={category} label={category}>
-                        {roles.map((role) => (
-                          <option key={role} value={role}>
-                            {role.replace(/_/g, ' ')}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
+                    onChange={(value) => setFormData({ ...formData, role: value })}
+                    placeholder="Select a role"
+                    searchable={true}
+                    className="w-full"
+                    size="md"
+                  />
                 </div>
 
                 <div>
@@ -157,19 +198,30 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Manager</label>
-                  <select
-                    name="managerId"
+                  <ElegantSelect
+                    options={[
+                      { value: '', label: 'No Manager' },
+                      ...potentialManagers.map(manager => ({
+                        value: manager.id,
+                        label: `${manager.name} (${manager.department})`,
+                        icon: (
+                          <div className="h-4 w-4 rounded-full bg-gradient-to-r from-green-500 to-green-600 flex items-center justify-center">
+                            <span className="text-xs font-medium text-white">
+                              {manager.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                        ),
+                        description: manager.department
+                      }))
+                    ]}
                     value={formData.managerId}
-                    onChange={handleChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="">No Manager</option>
-                    {potentialManagers.map((manager) => (
-                      <option key={manager.id} value={manager.id}>
-                        {manager.name} ({manager.department})
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(value) => setFormData({ ...formData, managerId: value })}
+                    placeholder="Select a manager"
+                    searchable={true}
+                    showClearButton={true}
+                    className="w-full"
+                    size="md"
+                  />
                 </div>
               </div>
 
@@ -201,7 +253,7 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
               </button>
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || !!emailError}
                 className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? (

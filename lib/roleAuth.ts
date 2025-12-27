@@ -74,7 +74,7 @@ export async function getOperationalApprover(workflowType: string, amount: numbe
 
       case 'POLICY_UPDATE_REQUEST':
       case 'PROCEDURE_CHANGE_REQUEST':
-        approverRoles = ['HR_MANAGER', 'CEO'];
+        approverRoles = ['HR_MANAGER', 'CEO', 'CTO', 'ADMIN']; // Added CTO and ADMIN as fallbacks
         break;
 
       case 'EXPENSE_APPROVAL_REQUEST':
@@ -105,8 +105,8 @@ export async function getOperationalApprover(workflowType: string, amount: numbe
         approverRoles = [...DEPARTMENT_HEAD_ROLES, 'CTO', 'CEO']; // Default to department heads + executives
     }
 
-    // Find available approver
-    const approvers = await prisma.employee.findMany({
+    // Find available approver (excluding requester)
+    let approvers = await prisma.employee.findMany({
       where: {
         role: { in: approverRoles as any },
         status: 'ACTIVE',
@@ -118,6 +118,19 @@ export async function getOperationalApprover(workflowType: string, amount: numbe
       ],
       take: 1
     });
+
+    // If no approver found (excluding requester), allow self-approval for policy workflows
+    if (approvers.length === 0 && workflowType === 'POLICY_UPDATE_REQUEST') {
+      console.log('No external approver found for policy workflow, allowing self-approval');
+      approvers = await prisma.employee.findMany({
+        where: {
+          role: { in: approverRoles as any },
+          status: 'ACTIVE',
+          id: requesterId // Allow the requester to approve their own policy
+        },
+        take: 1
+      });
+    }
 
     return approvers.length > 0 ? approvers[0].id : null;
   } catch (error) {

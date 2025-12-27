@@ -34,8 +34,11 @@ model Employee {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  resources       Resource[]
-  assignedResources Resource[] @relation("AssignedResources")
+  // Resource relations (new system)
+  custodianResources Resource[] @relation("ResourceCustodian")
+  resourceAssignments ResourceAssignment[] @relation("ResourceAssignments")
+  assignmentsMade ResourceAssignment[] @relation("AssignmentsMade")
+  
   accessRequests  Access[] @relation("EmployeeAccessRequests")
   approvals       Access[] @relation("EmployeeAccessApprovals")
   policies        Policy[]
@@ -54,26 +57,25 @@ model Employee {
 
 model Resource {
   id             String    @id @default(uuid())
-  name           String
+  name           String    // e.g., "MacBook Pro 16-inch"
   type           ResourceType
-  category       String?   // More flexible than enum
+  category       String?   // e.g., "Laptop", "Software License"
   
   // Basic info
   description    String?
-  ownerId        String?
-  owner          Employee? @relation(fields: [ownerId], references: [id])
   
-  // Who this resource is assigned to / who needs it
-  assignedToId   String?
-  assignedTo     Employee? @relation("AssignedResources", fields: [assignedToId], references: [id])
+  // Ownership & Custodian (Company owns, CEO is default custodian)
+  owner          String    @default("Unisouk") // Company name - never changes
+  custodianId    String    // CEO by default, can be changed
+  custodian      Employee  @relation("ResourceCustodian", fields: [custodianId], references: [id])
   
-  // Multiple assignments for SOFTWARE and CLOUD resources
-  assignedToIds  String[]  // Array of employee IDs for multi-assignment
+  // Quantity Management (Critical)
+  totalQuantity     Int       @default(1)  // Total purchased by company
+  // allocatedQuantity is derived from active assignments
+  // availableQuantity = totalQuantity - allocatedQuantity (calculated)
   
-  // Permission level for this resource
-  permissionLevel AccessPermissionLevel @default(READ)
-  
-  status         Status
+  // Resource Status
+  status         ResourceStatus @default(ACTIVE) // ACTIVE, RETURNED, LOST, DAMAGED
   
   // Physical asset fields
   serialNumber   String?   @unique
@@ -84,13 +86,13 @@ model Resource {
   warrantyExpiry DateTime?
   value          Float?
   
-  // Technical specifications (for hardware/software)
-  specifications Json?     // Store technical specs as JSON
+  // Technical specifications
+  specifications Json?
   operatingSystem String?
   osVersion      String?
   processor      String?
-  memory         String?   // RAM
-  storage        String?   // Storage capacity
+  memory         String?
+  storage        String?
   
   // Network and connectivity
   ipAddress      String?
@@ -101,21 +103,17 @@ model Resource {
   softwareVersion String?
   licenseKey     String?
   licenseExpiry  DateTime?
-  installedSoftware Json?   // Array of installed software
   
   // Cloud and subscription details
   subscriptionId String?
   subscriptionExpiry DateTime?
-  monthlyRate    Float?    // Monthly cost
-  annualRate     Float?    // Annual cost
-  provider       String?   // Cloud provider or vendor
-  serviceLevel   String?   // Service tier/level
+  monthlyRate    Float?
+  annualRate     Float?
+  provider       String?
+  serviceLevel   String?
   
-  // Access and usage
-  assignedDate   DateTime?
-  expiryDate     DateTime?
-  lastUsed       DateTime?
-  usageMetrics   Json?     // Usage statistics
+  // Default permission level for software/cloud resources
+  defaultPermission AccessPermissionLevel? @default(READ)
   
   // Maintenance and updates
   lastMaintenance DateTime?
@@ -123,15 +121,56 @@ model Resource {
   lastUpdate     DateTime?
   updateVersion  String?
   
+  // Timestamps
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   
   // Relations
+  assignments    ResourceAssignment[]
+  maintenanceRecords ResourceMaintenance[]
+  auditLogs      AuditLog[] @relation("ResourceAudit")
+  timelineActivities ActivityTimeline[] @relation("ResourceTimeline")
   accessLogs     Access[]
+  softwareUpdates SoftwareUpdate[]
   approvalWorkflows ApprovalWorkflow[]
-  maintenanceHistory ResourceMaintenance[]
-  softwareUpdates    SoftwareUpdate[]
-  timelineActivities ActivityTimeline[]
+}
+
+// New model for tracking individual resource assignments
+model ResourceAssignment {
+  id             String    @id @default(uuid())
+  
+  // Resource and Employee
+  resourceId     String
+  resource       Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee  @relation("ResourceAssignments", fields: [employeeId], references: [id])
+  
+  // Assignment Details
+  quantityAssigned Int     @default(1)  // How many units assigned to this employee
+  assignedBy     String   // ID of admin/custodian who made the assignment
+  assignedByUser Employee @relation("AssignmentsMade", fields: [assignedBy], references: [id])
+  
+  // Assignment Status
+  status         AssignmentStatus @default(ACTIVE) // ACTIVE, RETURNED, LOST, DAMAGED
+  
+  // Timestamps
+  assignedAt     DateTime  @default(now())
+  returnedAt     DateTime?
+  
+  // Return/Loss Details
+  returnReason   String?   // Reason for return
+  lossReason     String?   // Reason for loss/damage
+  notes          String?   // Additional notes
+  
+  // Audit trail
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  
+  // Relations
+  auditLogs      AuditLog[] @relation("AssignmentAudit")
+  timelineActivities ActivityTimeline[] @relation("AssignmentTimeline")
+  
+  @@unique([resourceId, employeeId, status]) // Prevent duplicate active assignments
 }
 
 model ResourceMaintenance {
@@ -274,6 +313,12 @@ model AuditLog {
   oldValue     String?
   newValue     String?
   timestamp    DateTime @default(now())
+  
+  // New relations for resource management
+  resourceId   String?
+  resource     Resource? @relation("ResourceAudit", fields: [resourceId], references: [id])
+  assignmentId String?
+  assignment   ResourceAssignment? @relation("AssignmentAudit", fields: [assignmentId], references: [id])
 }
 
 model ActivityTimeline {
@@ -294,7 +339,9 @@ model ActivityTimeline {
   documentId  String?
   document    Document?    @relation(fields: [documentId], references: [id])
   resourceId  String?
-  resource    Resource?    @relation(fields: [resourceId], references: [id])
+  resource    Resource?    @relation("ResourceTimeline", fields: [resourceId], references: [id])
+  assignmentId String?
+  assignment  ResourceAssignment? @relation("AssignmentTimeline", fields: [assignmentId], references: [id])
   workflowId  String?
   workflow    ApprovalWorkflow? @relation(fields: [workflowId], references: [id])
   employeeId  String?
@@ -360,6 +407,20 @@ enum ResourceType {
   PHYSICAL
   SOFTWARE
   CLOUD
+}
+
+enum ResourceStatus {
+  ACTIVE
+  RETURNED
+  LOST
+  DAMAGED
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  RETURNED
+  LOST
+  DAMAGED
 }
 
 enum AccessStatus {

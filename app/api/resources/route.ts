@@ -9,6 +9,8 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const assignedTo = searchParams.get('assignedTo');
+    const type = searchParams.get('type');
+    const search = searchParams.get('search');
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '12');
     const skip = (page - 1) * limit;
@@ -21,98 +23,152 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    let whereClause = {};
+    let whereClause: any = {};
     
-    // Role-based filtering
-    if (currentUser.role === 'CEO' || currentUser.role === 'CTO') {
-      // CEO and CTO can see all resources
+    // For regular employees, only show resources assigned to them
+    if (currentUser.role !== 'CEO' && currentUser.role !== 'CTO') {
+      whereClause.assignments = {
+        some: {
+          employeeId: currentUser.id,
+          status: 'ACTIVE'
+        }
+      };
+    } else {
+      // For CEO/CTO, apply employee filter if specified
       if (assignedTo) {
-        // Handle both single assignment (assignedToId) and multiple assignments (assignedToIds)
-        whereClause = {
-          OR: [
-            { assignedToId: assignedTo },
-            { assignedToIds: { has: assignedTo } }
-          ]
+        whereClause.assignments = {
+          some: {
+            employeeId: assignedTo,
+            status: 'ACTIVE'
+          }
         };
       }
-      // If no assignedTo filter, show all resources (no additional filtering)
-    } else {
-      // Regular employees can only see resources assigned to them
-      whereClause = {
-        OR: [
-          { assignedToId: currentUser.id },
-          { assignedToIds: { has: currentUser.id } }
-        ]
-      };
     }
 
-    // Get total count
-    const total = await prisma.resource.count({ where: whereClause });
+    // Add type filter if specified (only for CEO/CTO)
+    if (type && (currentUser.role === 'CEO' || currentUser.role === 'CTO')) {
+      whereClause.type = type;
+    }
 
-    // Get paginated resources
+    // Add search filter if specified
+    if (search && search.trim()) {
+      const searchConditions = [
+        { name: { contains: search.trim(), mode: 'insensitive' as any } },
+        { category: { contains: search.trim(), mode: 'insensitive' as any } },
+        { description: { contains: search.trim(), mode: 'insensitive' as any } },
+        { brand: { contains: search.trim(), mode: 'insensitive' as any } },
+        { modelNumber: { contains: search.trim(), mode: 'insensitive' as any } },
+        { provider: { contains: search.trim(), mode: 'insensitive' as any } },
+        { location: { contains: search.trim(), mode: 'insensitive' as any } }
+      ];
+
+      // Combine search with existing filters
+      if (whereClause.assignments || whereClause.type) {
+        const existingConditions = [];
+        if (whereClause.assignments) existingConditions.push({ assignments: whereClause.assignments });
+        if (whereClause.type) existingConditions.push({ type: whereClause.type });
+        
+        whereClause = {
+          AND: [
+            ...existingConditions,
+            { OR: searchConditions }
+          ]
+        };
+      } else {
+        whereClause.OR = searchConditions;
+      }
+    }
+
+    // Get total count first with the exact same where clause
+    const totalResources = await prisma.resource.count({ where: whereClause });
+
+    // Get resources with assignments for quantity calculation
     const resources = await prisma.resource.findMany({
       where: whereClause,
       include: {
-        owner: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            department: true
-          }
+        custodian: {
+          select: { id: true, name: true, role: true }
         },
-        assignedTo: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            department: true,
-            role: true
+        assignments: {
+          where: { status: 'ACTIVE' },
+          include: {
+            employee: {
+              select: { id: true, name: true, email: true, department: true, role: true }
+            }
           }
         }
       },
-      orderBy: {
-        createdAt: 'desc'
-      },
+      orderBy: { createdAt: 'desc' },
       skip,
       take: limit
     });
 
-    // For resources with multiple assignments, fetch the assigned employees
-    const resourcesWithAssignments = await Promise.all(
-      resources.map(async (resource) => {
-        if (resource.assignedToIds && resource.assignedToIds.length > 0) {
-          const assignedEmployees = await prisma.employee.findMany({
-            where: {
-              id: { in: resource.assignedToIds }
-            },
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              department: true,
-              role: true
-            }
-          });
-          return {
-            ...resource,
-            assignedEmployees
-          };
-        }
-        return resource;
-      })
-    );
+    // Calculate quantities for each resource
+    const resourcesWithQuantities = resources.map((resource: any) => {
+      const allocatedQuantity = resource.assignments.reduce((total: number, assignment: any) => {
+        return total + assignment.quantityAssigned;
+      }, 0);
+      
+      const availableQuantity = resource.totalQuantity - allocatedQuantity;
+
+      return {
+        id: resource.id,
+        name: resource.name,
+        type: resource.type,
+        category: resource.category,
+        description: resource.description,
+        owner: resource.owner,
+        custodian: resource.custodian,
+        totalQuantity: resource.totalQuantity,
+        allocatedQuantity,
+        availableQuantity,
+        status: resource.status,
+        // Physical asset fields
+        serialNumber: resource.serialNumber,
+        modelNumber: resource.modelNumber,
+        brand: resource.brand,
+        location: resource.location,
+        purchaseDate: resource.purchaseDate,
+        warrantyExpiry: resource.warrantyExpiry,
+        value: resource.value,
+        // Software/Cloud fields
+        provider: resource.provider,
+        softwareVersion: resource.softwareVersion,
+        monthlyRate: resource.monthlyRate,
+        annualRate: resource.annualRate,
+        serviceLevel: resource.serviceLevel,
+        defaultPermission: resource.defaultPermission,
+        // Timestamps
+        createdAt: resource.createdAt,
+        updatedAt: resource.updatedAt,
+        // Current assignments (for display)
+        currentAssignments: resource.assignments.map((assignment: any) => ({
+          id: assignment.id,
+          employee: assignment.employee,
+          quantityAssigned: assignment.quantityAssigned,
+          assignedAt: assignment.assignedAt
+        }))
+      };
+    });
 
     return NextResponse.json({
-      resources: resourcesWithAssignments,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit)
+      resources: resourcesWithQuantities,
+      pagination: {
+        page,
+        limit,
+        total: totalResources,
+        totalPages: Math.ceil(totalResources / limit)
+      },
+      userRole: currentUser.role, // Include user role for frontend logic
+      isRestrictedView: currentUser.role !== 'CEO' && currentUser.role !== 'CTO'
     });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error('Error fetching resources:', error);
-    return NextResponse.json({ error: 'Failed to fetch resources' }, { status: 500 });
+    return NextResponse.json({ 
+      error: 'Failed to fetch resources',
+      details: error.message 
+    }, { status: 500 });
   }
 }
 
@@ -130,6 +186,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
     
+    // Get the CEO for default custodian
+    const ceo = await prisma.employee.findFirst({
+      where: { role: 'CEO' },
+      select: { id: true, name: true }
+    });
+    
+    if (!ceo) {
+      return NextResponse.json({ 
+        error: 'CEO not found in system. Cannot create resource without default custodian.' 
+      }, { status: 500 });
+    }
+    
     // Validate required fields
     if (!body.name || !body.type) {
       console.log('Validation failed: missing required fields');
@@ -138,125 +206,110 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Validate assignment based on resource type
-    if (body.type === 'PHYSICAL' && !body.assignedToId) {
+    // Validate total quantity
+    const totalQuantity = parseInt(body.totalQuantity) || 1;
+    if (totalQuantity <= 0) {
       return NextResponse.json({ 
-        error: 'Physical resources must have a single assigned user (assignedToId)' 
-      }, { status: 400 });
-    }
-
-    if ((body.type === 'SOFTWARE' || body.type === 'CLOUD') && (!body.assignedToIds || body.assignedToIds.length === 0)) {
-      return NextResponse.json({ 
-        error: 'Software and Cloud resources must have at least one assigned user (assignedToIds)' 
+        error: 'Total quantity must be greater than 0' 
       }, { status: 400 });
     }
 
     console.log('Creating resource in database...');
     console.log('Current user creating resource:', currentUser.name, '(', currentUser.role, ')');
+    console.log('Resource will be owned by company and custodian will be CEO');
 
-    // Create resource with minimal data first
+    // Create resource with new structure
     const resource = await prisma.resource.create({
       data: {
         name: body.name,
         type: body.type,
-        assignedToId: body.type === 'PHYSICAL' ? body.assignedToId : null,
-        assignedToIds: body.type !== 'PHYSICAL' ? (body.assignedToIds || []) : [],
-        permissionLevel: body.permissionLevel || 'READ',
-        status: body.status || 'ACTIVE',
         category: body.category || null,
         description: body.description || null,
-        ownerId: body.ownerId || null,
-        // Add other fields as needed
+        owner: 'Unisouk', // Company owns all resources
+        custodianId: ceo.id, // CEO is default custodian
+        totalQuantity: totalQuantity,
+        status: 'ACTIVE', // Resources start as ACTIVE
+        // Physical asset fields
         serialNumber: body.serialNumber || null,
         modelNumber: body.modelNumber || null,
         brand: body.brand || null,
         location: body.location || null,
         value: body.value ? parseFloat(body.value) : null,
-        monthlyRate: body.monthlyRate ? parseFloat(body.monthlyRate) : null,
-        annualRate: body.annualRate ? parseFloat(body.annualRate) : null,
-        provider: body.provider || null,
-        serviceLevel: body.serviceLevel || null,
-        softwareVersion: body.softwareVersion || null,
-        // Handle dates
         purchaseDate: body.purchaseDate ? new Date(body.purchaseDate) : null,
         warrantyExpiry: body.warrantyExpiry ? new Date(body.warrantyExpiry) : null,
+        // Software/Cloud fields
+        provider: body.provider || null,
+        softwareVersion: body.softwareVersion || null,
+        monthlyRate: body.monthlyRate ? parseFloat(body.monthlyRate) : null,
+        annualRate: body.annualRate ? parseFloat(body.annualRate) : null,
+        serviceLevel: body.serviceLevel || null,
+        // Other fields
+        specifications: body.specifications || null,
+        operatingSystem: body.operatingSystem || null,
+        osVersion: body.osVersion || null,
+        processor: body.processor || null,
+        memory: body.memory || null,
+        storage: body.storage || null,
+        ipAddress: body.ipAddress || null,
+        macAddress: body.macAddress || null,
+        hostname: body.hostname || null,
+        licenseKey: body.licenseKey || null,
         licenseExpiry: body.licenseExpiry ? new Date(body.licenseExpiry) : null,
-        subscriptionExpiry: body.subscriptionExpiry ? new Date(body.subscriptionExpiry) : null,
+        subscriptionId: body.subscriptionId || null,
+        subscriptionExpiry: body.subscriptionExpiry ? new Date(body.subscriptionExpiry) : null
       },
       include: {
-        owner: {
+        custodian: {
           select: {
             id: true,
             name: true,
             email: true,
             department: true
           }
-        },
-        assignedTo: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            department: true,
-            role: true
-          }
         }
       }
     });
 
     console.log('Resource created successfully:', resource.id);
+    console.log('Resource owned by company, custodian is CEO');
 
-    // Try audit logging (but don't fail if it errors)
-    try {
-      await logAudit({
-        entityType: 'RESOURCE',
-        entityId: resource.id,
-        changedById: currentUser.id,
-        fieldChanged: 'created',
-        oldValue: null,
-        newValue: JSON.stringify({ name: resource.name, type: resource.type })
-      });
-    } catch (auditError) {
-      console.error('Audit logging failed:', auditError);
-    }
+    // Log the creation activity
+    await logTimelineActivity({
+      entityType: 'RESOURCE',
+      entityId: resource.id,
+      activityType: 'CREATED',
+      title: `Resource created: ${resource.name}`,
+      description: `${resource.name} (${resource.type}) was created by ${currentUser.name}. Total quantity: ${resource.totalQuantity}`,
+      metadata: {
+        resourceName: resource.name,
+        resourceType: resource.type,
+        resourceCategory: resource.category,
+        owner: resource.owner,
+        custodian: resource.custodian.name,
+        totalQuantity: resource.totalQuantity,
+        createdBy: currentUser.name,
+        createdById: currentUser.id
+      },
+      performedBy: currentUser.id,
+      resourceId: resource.id
+    });
 
-    // Try timeline logging (but don't fail if it errors)
-    try {
-      console.log('Attempting to log timeline activity...');
-      
-      // Create a more detailed description
-      const assignedToName = resource.assignedTo?.name || 'Unassigned';
-      const description = `New resource was created by ${currentUser.name} (${currentUser.role}) and assigned to ${assignedToName}`;
-      
-      await logTimelineActivity({
-        entityType: 'RESOURCE',
-        entityId: resource.id,
-        activityType: 'CREATED',
-        title: `Created resource: ${resource.name}`,
-        description: description,
-        metadata: {
-          type: resource.type,
-          status: resource.status,
-          createdBy: currentUser.name,
-          createdByRole: currentUser.role,
-          assignedTo: assignedToName,
-          assignedToId: resource.assignedToId
-        },
-        performedBy: currentUser.id,
-        resourceId: resource.id
-      });
-      console.log('Timeline activity logged successfully');
-    } catch (timelineError) {
-      console.error('Timeline logging failed:', timelineError);
-      console.error('Timeline error stack:', (timelineError as Error).stack);
-    }
+    return NextResponse.json({
+      success: true,
+      message: `Successfully created ${resource.name}`,
+      resource: {
+        ...resource,
+        allocatedQuantity: 0,
+        availableQuantity: resource.totalQuantity,
+        currentAssignments: []
+      }
+    });
 
-    return NextResponse.json(resource, { status: 201 });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating resource:', error);
     return NextResponse.json({ 
-      error: 'Failed to create resource', 
-      details: error instanceof Error ? error.message : 'Unknown error'
+      error: 'Failed to create resource',
+      details: error.message 
     }, { status: 500 });
   }
 }
@@ -264,96 +317,121 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+    const resourceId = searchParams.get('id');
+    const body = await request.json();
 
-    if (!id) {
+    if (!resourceId) {
       return NextResponse.json({ error: 'Resource ID is required' }, { status: 400 });
     }
 
-    const body = await request.json();
+    // Get the authenticated user
+    const token = request.cookies.get('auth-token')?.value;
+    const currentUser = token ? await getUserFromToken(token) : null;
+    
+    if (!currentUser) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
 
-    // Get current resource data for change tracking
-    const currentResource = await prisma.resource.findUnique({
-      where: { id }
+    // Get existing resource
+    const existingResource = await prisma.resource.findUnique({
+      where: { id: resourceId },
+      include: {
+        assignments: { where: { status: 'ACTIVE' } }
+      }
     });
 
-    if (!currentResource) {
+    if (!existingResource) {
       return NextResponse.json({ error: 'Resource not found' }, { status: 404 });
+    }
+
+    // Calculate current allocated quantity
+    const allocatedQuantity = existingResource.assignments.reduce((total: number, assignment: any) => {
+      return total + assignment.quantityAssigned;
+    }, 0);
+
+    // Validate new total quantity if being updated
+    const newTotalQuantity = body.totalQuantity ? parseInt(body.totalQuantity) : existingResource.totalQuantity;
+    if (newTotalQuantity < allocatedQuantity) {
+      return NextResponse.json({ 
+        error: `Cannot reduce total quantity below allocated quantity. Allocated: ${allocatedQuantity}, Requested: ${newTotalQuantity}`,
+        details: {
+          allocatedQuantity,
+          requestedTotalQuantity: newTotalQuantity
+        }
+      }, { status: 400 });
     }
 
     // Update resource
     const updatedResource = await prisma.resource.update({
-      where: { id },
+      where: { id: resourceId },
       data: {
-        name: body.name,
-        type: body.type,
-        category: body.category || null,
-        description: body.description || null,
-        ownerId: body.ownerId || null,
-        assignedToId: body.type === 'PHYSICAL' ? body.assignedToId : null,
-        assignedToIds: body.type !== 'PHYSICAL' ? (body.assignedToIds || []) : [],
-        permissionLevel: body.permissionLevel || 'READ',
-        status: body.status || 'ACTIVE',
-        serialNumber: body.serialNumber || null,
-        modelNumber: body.modelNumber || null,
-        brand: body.brand || null,
-        location: body.location || null,
-        value: body.value ? parseFloat(body.value) : null,
-        monthlyRate: body.monthlyRate ? parseFloat(body.monthlyRate) : null,
-        annualRate: body.annualRate ? parseFloat(body.annualRate) : null,
-        provider: body.provider || null,
-        serviceLevel: body.serviceLevel || null,
-        softwareVersion: body.softwareVersion || null,
-        licenseKey: body.licenseKey || null,
-        subscriptionId: body.subscriptionId || null,
-        purchaseDate: body.purchaseDate ? new Date(body.purchaseDate) : null,
-        warrantyExpiry: body.warrantyExpiry ? new Date(body.warrantyExpiry) : null,
-        licenseExpiry: body.licenseExpiry ? new Date(body.licenseExpiry) : null,
-        subscriptionExpiry: body.subscriptionExpiry ? new Date(body.subscriptionExpiry) : null,
-        assignedDate: body.assignedDate ? new Date(body.assignedDate) : null,
-        expiryDate: body.expiryDate ? new Date(body.expiryDate) : null,
-        lastMaintenance: body.lastMaintenance ? new Date(body.lastMaintenance) : null,
-        nextMaintenance: body.nextMaintenance ? new Date(body.nextMaintenance) : null,
-        lastUpdate: body.lastUpdate ? new Date(body.lastUpdate) : null,
-        updateVersion: body.updateVersion || null
+        name: body.name || existingResource.name,
+        category: body.category !== undefined ? body.category : existingResource.category,
+        description: body.description !== undefined ? body.description : existingResource.description,
+        totalQuantity: newTotalQuantity,
+        // Physical asset fields
+        serialNumber: body.serialNumber !== undefined ? body.serialNumber : existingResource.serialNumber,
+        modelNumber: body.modelNumber !== undefined ? body.modelNumber : existingResource.modelNumber,
+        brand: body.brand !== undefined ? body.brand : existingResource.brand,
+        location: body.location !== undefined ? body.location : existingResource.location,
+        value: body.value !== undefined ? (body.value ? parseFloat(body.value) : null) : existingResource.value,
+        // Software/Cloud fields
+        provider: body.provider !== undefined ? body.provider : existingResource.provider,
+        softwareVersion: body.softwareVersion !== undefined ? body.softwareVersion : existingResource.softwareVersion,
+        monthlyRate: body.monthlyRate !== undefined ? (body.monthlyRate ? parseFloat(body.monthlyRate) : null) : existingResource.monthlyRate,
+        annualRate: body.annualRate !== undefined ? (body.annualRate ? parseFloat(body.annualRate) : null) : existingResource.annualRate,
+        serviceLevel: body.serviceLevel !== undefined ? body.serviceLevel : existingResource.serviceLevel,
+        // Handle dates
+        purchaseDate: body.purchaseDate !== undefined ? (body.purchaseDate ? new Date(body.purchaseDate) : null) : existingResource.purchaseDate,
+        warrantyExpiry: body.warrantyExpiry !== undefined ? (body.warrantyExpiry ? new Date(body.warrantyExpiry) : null) : existingResource.warrantyExpiry,
+        licenseExpiry: body.licenseExpiry !== undefined ? (body.licenseExpiry ? new Date(body.licenseExpiry) : null) : existingResource.licenseExpiry,
+        subscriptionExpiry: body.subscriptionExpiry !== undefined ? (body.subscriptionExpiry ? new Date(body.subscriptionExpiry) : null) : existingResource.subscriptionExpiry
       },
       include: {
-        owner: {
+        custodian: {
           select: {
             id: true,
             name: true,
             email: true,
             department: true
           }
-        },
-        assignedTo: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            department: true,
-            role: true
-          }
         }
       }
     });
 
-    // Track all changes comprehensively
-    await trackEntityUpdate(
-      'RESOURCE',
-      id,
-      updatedResource.name,
-      currentResource,
-      updatedResource,
-      request
-    );
+    // Log the update activity
+    await logTimelineActivity({
+      entityType: 'RESOURCE',
+      entityId: resourceId,
+      activityType: 'UPDATED',
+      title: `Resource updated: ${updatedResource.name}`,
+      description: `${updatedResource.name} was updated by ${currentUser.name}`,
+      metadata: {
+        resourceName: updatedResource.name,
+        resourceType: updatedResource.type,
+        updatedBy: currentUser.name,
+        updatedById: currentUser.id,
+        changes: body
+      },
+      performedBy: currentUser.id,
+      resourceId: resourceId
+    });
 
-    return NextResponse.json(updatedResource);
-  } catch (error) {
+    return NextResponse.json({
+      success: true,
+      message: `Successfully updated ${updatedResource.name}`,
+      resource: {
+        ...updatedResource,
+        allocatedQuantity,
+        availableQuantity: updatedResource.totalQuantity - allocatedQuantity
+      }
+    });
+
+  } catch (error: any) {
     console.error('Error updating resource:', error);
     return NextResponse.json({ 
-      error: 'Failed to update resource', 
-      details: error instanceof Error ? error.message : 'Unknown error'
+      error: 'Failed to update resource',
+      details: error.message 
     }, { status: 500 });
   }
 }

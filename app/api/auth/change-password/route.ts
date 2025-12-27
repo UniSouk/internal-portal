@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get user from token
-    const token = request.cookies.get('token')?.value;
+    const token = request.cookies.get('auth-token')?.value;
     if (!token) {
       return NextResponse.json(
         { error: 'Authentication required' },

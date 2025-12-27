@@ -61,19 +61,6 @@ export default function EmployeeResources({ employeeId, employeeName, isOpen, on
     }
   };
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'PHYSICAL':
-        return '🖥️';
-      case 'SOFTWARE':
-        return '📦';
-      case 'CLOUD':
-        return '☁️';
-      default:
-        return '📋';
-    }
-  };
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'ACTIVE':
@@ -95,6 +82,8 @@ export default function EmployeeResources({ employeeId, employeeName, isOpen, on
   };
 
   if (!isOpen) return null;
+
+  console.log("ress: ", resources);
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
@@ -177,7 +166,6 @@ export default function EmployeeResources({ employeeId, employeeName, isOpen, on
                     <div key={resource.id} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex items-center">
-                          <span className="text-2xl mr-2">{getTypeIcon(resource.type)}</span>
                           <div>
                             <h4 className="font-medium text-gray-900 text-sm">{resource.name}</h4>
                             {resource.category && (

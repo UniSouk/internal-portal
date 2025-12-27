@@ -28,19 +28,6 @@ export default function ResourceDetails({ resource, isOpen, onClose }: ResourceD
     });
   };
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'PHYSICAL':
-        return '🖥️';
-      case 'SOFTWARE':
-        return '📦';
-      case 'CLOUD':
-        return '☁️';
-      default:
-        return '📋';
-    }
-  };
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'ACTIVE':
@@ -76,7 +63,6 @@ export default function ResourceDetails({ resource, isOpen, onClose }: ResourceD
       <div className="relative top-10 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center">
-            <span className="text-3xl mr-3">{getTypeIcon(resource.type)}</span>
             <div>
               <h2 className="text-2xl font-bold text-gray-900">{resource.name}</h2>
               <div className="flex items-center mt-1">

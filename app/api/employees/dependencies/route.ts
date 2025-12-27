@@ -42,9 +42,9 @@ export async function GET(request: NextRequest) {
         select: { id: true, title: true, category: true, status: true }
       }),
       
-      // Resources owned by this employee
+      // Resources managed by this employee (as custodian)
       prisma.resource.findMany({
-        where: { ownerId: id },
+        where: { custodianId: id },
         select: { id: true, name: true, type: true, status: true }
       }),
       

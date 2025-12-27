@@ -40,14 +40,6 @@ const STANDARD_ONBOARDING_RESOURCES: OnboardingResourceTemplate[] = [
     required: true
   },
   {
-    name: 'VPN Access',
-    type: 'SOFTWARE',
-    category: 'Security',
-    description: 'Virtual Private Network access for remote work',
-    permissionLevel: 'WRITE',
-    required: true
-  },
-  {
     name: 'Company Handbook Access',
     type: 'CLOUD',
     category: 'Documentation',
@@ -146,18 +138,23 @@ export async function assignOnboardingResources(
 
         // If resource doesn't exist, create it
         if (!existingResource) {
+          // Get CEO for custodian assignment
+          const ceo = await prisma.employee.findFirst({ 
+            where: { role: 'CEO' },
+            select: { id: true }
+          });
+          
           existingResource = await prisma.resource.create({
             data: {
               name: template.name,
               type: template.type,
               category: template.category,
               description: template.description,
-              permissionLevel: template.permissionLevel || 'READ',
+              defaultPermission: template.permissionLevel || 'READ',
               status: 'ACTIVE',
-              ownerId: performedBy, // System or admin user owns onboarding resources
-              // Initialize assignment fields based on type
-              assignedToId: template.type === 'PHYSICAL' ? null : null,
-              assignedToIds: template.type !== 'PHYSICAL' ? [] : undefined
+              owner: 'Unisouk', // Company owns all resources
+              custodianId: ceo?.id || performedBy, // CEO is custodian, fallback to system user
+              totalQuantity: 10 // Default quantity for onboarding resources
             }
           });
 
@@ -165,33 +162,39 @@ export async function assignOnboardingResources(
           console.log(`Created new onboarding resource: ${template.name}`);
         }
 
-        // Assign the resource to the employee
-        if (template.type === 'PHYSICAL') {
-          // Physical resources: single assignment
-          await prisma.resource.update({
-            where: { id: existingResource.id },
-            data: {
-              assignedToId: employeeId,
-              status: 'ASSIGNED',
-              assignedDate: new Date()
+        // Assign the resource to the employee using the new assignment system
+        try {
+          // Check if assignment already exists
+          const existingAssignment = await prisma.resourceAssignment.findFirst({
+            where: {
+              resourceId: existingResource.id,
+              employeeId: employeeId,
+              status: 'ACTIVE'
             }
           });
-        } else {
-          // Software/Cloud resources: multiple assignments
-          const currentAssignedIds = existingResource.assignedToIds || [];
-          if (!currentAssignedIds.includes(employeeId)) {
-            await prisma.resource.update({
-              where: { id: existingResource.id },
+
+          if (!existingAssignment) {
+            // Create new assignment
+            await prisma.resourceAssignment.create({
               data: {
-                assignedToIds: [...currentAssignedIds, employeeId],
-                status: 'ASSIGNED',
-                assignedDate: new Date()
+                resourceId: existingResource.id,
+                employeeId: employeeId,
+                quantityAssigned: 1,
+                assignedBy: performedBy,
+                status: 'ACTIVE',
+                notes: `Automatically assigned during onboarding process`
               }
             });
-          }
-        }
 
-        results.assigned++;
+            results.assigned++;
+            console.log(`Assigned ${template.name} to ${employeeName} during onboarding`);
+          } else {
+            console.log(`${template.name} already assigned to ${employeeName}`);
+          }
+        } catch (assignmentError) {
+          console.error(`Failed to assign ${template.name} to ${employeeName}:`, assignmentError);
+          results.errors.push(`Failed to assign ${template.name}: ${assignmentError}`);
+        }
 
         // Log the assignment
         await logTimelineActivity({
@@ -288,19 +291,21 @@ export async function checkEmployeeOnboardingStatus(employeeId: string): Promise
     // Get expected resources for this employee
     const expectedResources = await getOnboardingResourcesForRole(employee.role, employee.department);
 
-    // Get actually assigned resources
-    const assignedResources = await prisma.resource.findMany({
+    // Get actually assigned resources using the new assignment system
+    const assignedResources = await prisma.resourceAssignment.findMany({
       where: {
-        OR: [
-          { assignedToId: employeeId },
-          { assignedToIds: { has: employeeId } }
-        ]
+        employeeId: employeeId,
+        status: 'ACTIVE'
       },
-      select: { name: true, type: true }
+      include: {
+        resource: {
+          select: { name: true, type: true }
+        }
+      }
     });
 
     // Check which resources are missing
-    const assignedResourceNames = assignedResources.map(r => r.name);
+    const assignedResourceNames = assignedResources.map(assignment => assignment.resource.name);
     const missingResources = expectedResources
       .filter(expected => !assignedResourceNames.includes(expected.name))
       .map(missing => missing.name);

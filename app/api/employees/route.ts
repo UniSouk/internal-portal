@@ -229,13 +229,42 @@ export async function POST(request: NextRequest) {
       // Unique constraint violation
       if (error.meta?.target?.includes('email')) {
         return NextResponse.json(
-          { error: 'An employee with this email address already exists' }, 
+          { 
+            error: 'Email address already exists', 
+            message: 'An employee with this email address already exists. Please use a different email address.',
+            field: 'email',
+            code: 'DUPLICATE_EMAIL'
+          }, 
           { status: 400 }
         );
       }
+      // Handle other unique constraints if any
+      return NextResponse.json(
+        { 
+          error: 'Duplicate entry', 
+          message: 'This information already exists in the system.',
+          code: 'DUPLICATE_ENTRY'
+        }, 
+        { status: 400 }
+      );
     }
     
-    return NextResponse.json({ error: 'Failed to create employee' }, { status: 500 });
+    // Handle other Prisma errors
+    if (error.code?.startsWith('P')) {
+      return NextResponse.json(
+        { 
+          error: 'Database error', 
+          message: 'There was an issue with the database operation. Please try again.',
+          code: error.code
+        }, 
+        { status: 500 }
+      );
+    }
+    
+    return NextResponse.json({ 
+      error: 'Failed to create employee',
+      message: 'An unexpected error occurred while creating the employee. Please try again.'
+    }, { status: 500 });
   }
 }
 
@@ -422,12 +451,12 @@ export async function DELETE(request: NextRequest) {
       });
       console.log(`Updated ${documentsUpdated.count} documents owned by employee`);
 
-      // 7. Update resources owned by this employee
+      // 7. Update resources managed by this employee (transfer custodianship)
       const resourcesUpdated = await prisma.resource.updateMany({
-        where: { ownerId: id },
-        data: { ownerId: systemUserId }
+        where: { custodianId: id },
+        data: { custodianId: systemUserId }
       });
-      console.log(`Updated ${resourcesUpdated.count} resources owned by employee`);
+      console.log(`Updated ${resourcesUpdated.count} resources managed by employee`);
 
       // 8. Update subordinates' manager reference
       const subordinatesUpdated = await prisma.employee.updateMany({
@@ -551,11 +580,14 @@ export async function DELETE(request: NextRequest) {
               data: { managerId: null }
             });
 
-            // 4. Update any resources owned by this employee (set to null)
-            await tx.resource.updateMany({
-              where: { ownerId: id },
-              data: { ownerId: null }
-            });
+            // 4. Update any resources managed by this employee (transfer custodianship to CEO)
+            const ceo = await tx.employee.findFirst({ where: { role: 'CEO' } });
+            if (ceo) {
+              await tx.resource.updateMany({
+                where: { custodianId: id },
+                data: { custodianId: ceo.id }
+              });
+            }
 
             // 5. Delete access requests made by this employee
             await tx.access.deleteMany({

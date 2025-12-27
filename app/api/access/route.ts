@@ -138,24 +138,48 @@ export async function POST(request: NextRequest) {
       resourceType = 'MIXED';
     }
 
-    // Determine approver - use provided approverId, employee's manager, or fallback to CTO
+    // Determine approver - use provided approverId, employee's manager, or fallback hierarchy
     let finalApproverId = approverId || employee.managerId;
 
-    // If no approver found, fallback to CTO
+    // If no approver found, use fallback hierarchy: CTO -> CEO -> ADMIN
     if (!finalApproverId) {
-      console.log('No manager found for employee, falling back to CTO...');
+      console.log('No manager found for employee, searching for fallback approver...');
+      
+      // Try CTO first
       const cto = await prisma.employee.findFirst({
         where: { role: 'CTO', status: 'ACTIVE' },
-        select: { id: true }
+        select: { id: true, name: true }
       });
       
       if (cto) {
         finalApproverId = cto.id;
-        console.log(`Using CTO as approver: ${cto.id}`);
+        console.log(`Using CTO as approver: ${cto.name} (${cto.id})`);
       } else {
-        return NextResponse.json({ 
-          error: 'No approver available: Employee has no manager and no active CTO found' 
-        }, { status: 400 });
+        // Try CEO if no CTO
+        const ceo = await prisma.employee.findFirst({
+          where: { role: 'CEO', status: 'ACTIVE' },
+          select: { id: true, name: true }
+        });
+        
+        if (ceo) {
+          finalApproverId = ceo.id;
+          console.log(`Using CEO as approver: ${ceo.name} (${ceo.id})`);
+        } else {
+          // Try ADMIN as last resort
+          const admin = await prisma.employee.findFirst({
+            where: { role: 'ADMIN', status: 'ACTIVE' },
+            select: { id: true, name: true }
+          });
+          
+          if (admin) {
+            finalApproverId = admin.id;
+            console.log(`Using ADMIN as approver: ${admin.name} (${admin.id})`);
+          } else {
+            return NextResponse.json({ 
+              error: 'No approver available: Employee has no manager and no active CTO, CEO, or ADMIN found' 
+            }, { status: 400 });
+          }
+        }
       }
     }
 
