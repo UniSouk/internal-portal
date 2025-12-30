@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "bootstrap": "node seed-ceo-bootstrap.js",
-    "setup-first-employee": "node setup-single-user-resources.js"
+    "setup-first-employee": "node setup-single-user-resources.js",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
