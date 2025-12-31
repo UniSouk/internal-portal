@@ -121,7 +121,6 @@ export async function getAllTimeline(limit = 50, page = 1) {
   try {
     const skip = (page - 1) * limit;
     
-    console.log(`getAllTimeline called with limit: ${limit}, page: ${page}`);
     const activities = await prisma.activityTimeline.findMany({
       include: {
         performer: {
@@ -139,8 +138,6 @@ export async function getAllTimeline(limit = 50, page = 1) {
       skip,
       take: limit
     });
-
-    console.log(`Prisma query returned ${activities.length} activities`);
 
     // Handle cases where performer employee might be deleted
     const processedActivities = activities.map((activity: any) => {
@@ -171,7 +168,6 @@ export async function getAllTimeline(limit = 50, page = 1) {
       return activity;
     });
 
-    console.log(`Processed ${processedActivities.length} activities`);
     return processedActivities;
   } catch (error) {
     console.error('Failed to fetch timeline:', error);

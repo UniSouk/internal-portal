@@ -50,11 +50,9 @@ export async function PUT(
 
         if (fallbackApprover) {
           finalApproverId = fallbackApprover.id;
-          console.log(`Using fallback approver: ${fallbackApprover.name} (${fallbackApprover.id})`);
         } else {
           // If no fallback found, use CEO
           finalApproverId = ceoUser.id;
-          console.log(`Using CEO as approver: ${ceoUser.id}`);
         }
       }
     }
@@ -149,10 +147,9 @@ export async function PUT(
                   data: {
                     resourceId: resource.id,
                     employeeId: employeeId,
-                    quantityAssigned: 1,
                     assignedBy: finalApproverId,
                     status: 'ACTIVE',
-                    notes: `Assigned via access request approval - ${accessRequest.permissionLevel} access`
+                    notes: `Assigned via access request approval`
                   }
                 });
 
@@ -170,14 +167,12 @@ export async function PUT(
                     employeeId: employeeId,
                     assignmentMethod: 'access_request_approval',
                     accessRequestId: workflowData.accessRequestId,
-                    workflowId: id,
-                    permissionLevel: accessRequest.permissionLevel
+                    workflowId: id
                   },
                   performedBy: finalApproverId,
                   resourceId: resource.id
                 });
 
-                console.log(`Resource ${resource.name} assigned to ${accessRequest.employee.name} via access request approval`);
               } catch (resourceAssignmentError) {
                 console.error('Failed to assign resource to employee:', resourceAssignmentError);
                 // Don't fail the entire approval process if resource assignment fails
@@ -205,7 +200,6 @@ export async function PUT(
                     description: `Hardware requested via access request by ${accessRequest.employee.name}`,
                     owner: 'Unisouk', // Company owns all resources
                     custodianId: ceo.id, // CEO is custodian
-                    totalQuantity: 1,
                     status: 'ACTIVE'
                   }
                 });
@@ -215,7 +209,6 @@ export async function PUT(
                   data: {
                     resourceId: newResource.id,
                     employeeId: employeeId,
-                    quantityAssigned: 1,
                     assignedBy: ceo.id,
                     status: 'ACTIVE',
                     notes: 'Assigned via access request approval'
@@ -251,7 +244,6 @@ export async function PUT(
                   resourceId: newResource.id
                 });
 
-                console.log(`Hardware resource ${newResource.name} created and assigned to ${accessRequest.employee.name} via hardware request approval`);
               } catch (hardwareCreationError) {
                 console.error('Failed to create hardware resource:', hardwareCreationError);
                 // Don't fail the entire approval process if hardware creation fails
@@ -337,7 +329,6 @@ export async function PUT(
           console.error('Failed to log timeline activity for policy:', timelineError);
         }
 
-        console.log(`Policy ${updatedPolicy.title} status updated to ${policyStatus} after workflow ${action}`);
       } catch (policyUpdateError: any) {
         console.error('Failed to update policy status:', policyUpdateError);
         return NextResponse.json({ 

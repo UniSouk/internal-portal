@@ -180,8 +180,6 @@ export default function AuditPage() {
     );
   }
 
-  console.log("auditLogs: ", auditLogs);
-
   return (
     <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR']}>
       <div className="min-h-screen bg-gray-50">
@@ -497,6 +495,7 @@ export default function AuditPage() {
             </p>
           </div>
         )}
+      </div>
       </div>
     </ProtectedRoute>
   );

@@ -293,9 +293,6 @@ export default function AssignResourcesPage() {
           notes: `Auto-assigned during onboarding for ${employee.department} department`
         };
 
-        console.log('Assigning resource:', resource.name, 'to employee:', employee.name);
-        console.log('Assignment data:', assignmentData);
-
         try {
           const response = await fetch('/api/resources/assign', {
             method: 'POST',
@@ -310,7 +307,6 @@ export default function AssignResourcesPage() {
           }
 
           const result = await response.json();
-          console.log('Assignment successful for resource:', resource.name, result);
           return { ok: true, result };
         } catch (error) {
           console.error('Network error during assignment:', error);
@@ -321,13 +317,6 @@ export default function AssignResourcesPage() {
       const results = await Promise.all(assignmentPromises);
       const successResults = results.filter(r => r?.ok);
       const failureResults = results.filter(r => r && !r.ok);
-      
-      console.log('Assignment results:', {
-        total: results.length,
-        successful: successResults.length,
-        failed: failureResults.length,
-        failures: failureResults
-      });
 
       if (successResults.length > 0) {
         let message = `Successfully assigned ${successResults.length} resources to ${employee.name}`;
@@ -380,7 +369,7 @@ export default function AssignResourcesPage() {
 
   if (loading) {
     return (
-      <ProtectedRoute>
+      <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER', 'HR_MANAGER', 'ENGINEERING_MANAGER']}>
         <div className="min-h-screen bg-gray-50 flex items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
@@ -393,7 +382,7 @@ export default function AssignResourcesPage() {
 
   if (!employee) {
     return (
-      <ProtectedRoute>
+      <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER', 'HR_MANAGER', 'ENGINEERING_MANAGER']}>
         <div className="min-h-screen bg-gray-50 flex items-center justify-center">
           <div className="text-center">
             <h2 className="text-2xl font-bold text-gray-900">Employee Not Found</h2>
@@ -411,7 +400,7 @@ export default function AssignResourcesPage() {
   }
 
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER', 'HR_MANAGER', 'ENGINEERING_MANAGER']}>
       {NotificationComponent}
       <div className="min-h-screen bg-gray-50 py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

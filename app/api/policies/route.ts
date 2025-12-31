@@ -261,11 +261,8 @@ export async function POST(request: NextRequest) {
     // Automatically create publish workflow if policy is ready for review
     if (policy.status === 'REVIEW' && (policy.content || policy.filePath)) {
       try {
-        console.log(`Policy "${policy.title}" created with REVIEW status - creating approval workflow`);
-        console.log(`Policy has content: ${!!policy.content}, has file: ${!!policy.filePath}`);
         
         const workflow = await createPolicyPublishWorkflow(policy.id, finalOwnerId);
-        console.log(`✅ Automatic publish workflow created for new policy: ${workflow.id}`);
         
         // Log workflow creation in timeline
         await logTimelineActivity({
@@ -287,17 +284,10 @@ export async function POST(request: NextRequest) {
         
       } catch (workflowError) {
         console.error('❌ Failed to create automatic publish workflow for new policy:', workflowError);
-        console.error('Policy ID:', policy.id);
-        console.error('Policy Title:', policy.title);
-        console.error('Requester ID:', finalOwnerId);
-        console.error('Full error:', workflowError);
         // Don't fail the policy creation if workflow creation fails
       }
     } else {
       console.log(`Policy "${policy.title}" created but workflow not needed:`);
-      console.log(`- Status: ${policy.status} (needs REVIEW)`);
-      console.log(`- Has content: ${!!policy.content}`);
-      console.log(`- Has file: ${!!policy.filePath}`);
     }
 
     return NextResponse.json(policy, { status: 201 });
@@ -409,8 +399,6 @@ export async function PUT(request: NextRequest) {
     // Check if status changed to REVIEW - create approval workflow
     if (currentPolicy.status !== 'REVIEW' && body.status === 'REVIEW') {
       try {
-        console.log(`Policy "${updatedPolicy.title}" moved to REVIEW status - creating approval workflow`);
-        console.log(`Policy has content: ${!!updatedPolicy.content}, has file: ${!!updatedPolicy.filePath}`);
         
         const ceoUser = await prisma.employee.findFirst({
           where: { role: 'CEO' },
@@ -418,6 +406,10 @@ export async function PUT(request: NextRequest) {
         });
         
         const workflowRequesterId = updatedPolicy.ownerId || currentPolicy.ownerId || ceoUser?.id;
+        
+        if (!workflowRequesterId) {
+          return NextResponse.json({ error: 'Unable to determine workflow requester' }, { status: 500 });
+        }
         
         const workflow = await createPolicyPublishWorkflow(updatedPolicy.id, workflowRequesterId);
         
@@ -439,7 +431,6 @@ export async function PUT(request: NextRequest) {
           workflowId: workflow.id
         });
 
-        console.log(`✅ Policy approval workflow created: ${workflow.id}`);
       } catch (workflowError) {
         const ceoUser = await prisma.employee.findFirst({
           where: { role: 'CEO' },

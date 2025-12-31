@@ -9,12 +9,9 @@ export async function GET(request: NextRequest) {
     if (!userId) {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
     }
-
-    console.log(`Fetching workflow stats for user: ${userId}`);
     
     const stats = await getOperationalWorkflowStats(userId);
     
-    console.log(`Workflow stats:`, stats);
     return NextResponse.json(stats);
 
   } catch (error) {

@@ -216,8 +216,6 @@ export default function Timeline({
     );
   }
 
-  console.log("activities: ", activities);
-
   return (
     <div className="space-y-4">
       <div className="flow-root">

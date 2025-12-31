@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticateUser, generateToken } from '@/lib/auth';
 import { logTimelineActivity } from '@/lib/timeline';
 import { checkEmployeeOnboardingStatus, assignOnboardingResources } from '@/lib/onboardingResources';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,7 +54,6 @@ export async function POST(request: NextRequest) {
       const onboardingStatus = await checkEmployeeOnboardingStatus(user.id);
       
       if (!onboardingStatus.completed) {
-        console.log(`User ${user.name} missing onboarding resources, assigning automatically...`);
         
         const ceoUser = await prisma.employee.findFirst({
           where: { role: 'CEO' },
@@ -76,7 +78,6 @@ export async function POST(request: NextRequest) {
           completed: onboardingResults.errors.length === 0
         };
 
-        console.log(`Onboarding completed for ${user.name} on login:`, onboardingResults);
       } else {
         onboardingInfo = {
           wasIncomplete: false,

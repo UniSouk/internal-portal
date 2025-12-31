@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
       policies,
       documents,
       resources,
+      assignedResources,
       subordinates,
       accessRequests,
       approvals,
@@ -46,6 +47,37 @@ export async function GET(request: NextRequest) {
       prisma.resource.findMany({
         where: { custodianId: id },
         select: { id: true, name: true, type: true, status: true }
+      }),
+      
+      // Resources assigned to this employee
+      prisma.resourceAssignment.findMany({
+        where: { 
+          employeeId: id,
+          status: 'ACTIVE'
+        },
+        select: { 
+          id: true,
+          assignedAt: true,
+          notes: true,
+          resource: {
+            select: { 
+              id: true, 
+              name: true, 
+              type: true, 
+              category: true,
+              status: true 
+            }
+          },
+          item: {
+            select: {
+              id: true,
+              serialNumber: true,
+              hostname: true,
+              licenseKey: true
+            }
+          }
+        },
+        orderBy: { assignedAt: 'desc' }
       }),
       
       // Employees managed by this employee
@@ -107,6 +139,7 @@ export async function GET(request: NextRequest) {
       policies: policies.length > 0 ? policies : null,
       documents: documents.length > 0 ? documents : null,
       resources: resources.length > 0 ? resources : null,
+      assignedResources: assignedResources.length > 0 ? assignedResources : null,
       subordinates: subordinates.length > 0 ? subordinates : null,
       accessRequests: accessRequests.length > 0 ? accessRequests : null,
       approvals: approvals.length > 0 ? approvals : null,

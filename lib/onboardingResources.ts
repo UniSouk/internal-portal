@@ -38,18 +38,14 @@ export async function assignOnboardingResources(
         name: true,
         type: true,
         category: true,
-        description: true,
-        defaultPermission: true
+        description: true
       }
     });
 
     if (availableResources.length === 0) {
       results.errors.push('No resources available for onboarding. Please create resources first.');
-      console.log(`No resources available for onboarding ${employeeName}`);
       return results;
     }
-
-    console.log(`Found ${availableResources.length} available resources for onboarding ${employeeName}`);
 
     // For now, assign basic resources that are commonly needed
     // This can be made more sophisticated with role-based logic later
@@ -80,7 +76,6 @@ export async function assignOnboardingResources(
             data: {
               resourceId: resource.id,
               employeeId: employeeId,
-              quantityAssigned: 1,
               assignedBy: performedBy,
               status: 'ACTIVE',
               notes: `Automatically assigned during onboarding process`
@@ -88,7 +83,6 @@ export async function assignOnboardingResources(
           });
 
           results.assigned++;
-          console.log(`Assigned ${resource.name} to ${employeeName} during onboarding`);
         } else {
           console.log(`${resource.name} already assigned to ${employeeName}`);
         }
@@ -107,7 +101,7 @@ export async function assignOnboardingResources(
             employeeName: employeeName,
             employeeId: employeeId,
             assignmentMethod: 'automatic_onboarding',
-            permissionLevel: resource.defaultPermission,
+            permissionLevel: 'read', // Default permission level
             required: true
           },
           performedBy: performedBy,
@@ -142,8 +136,6 @@ export async function assignOnboardingResources(
       performedBy: performedBy,
       employeeId: employeeId
     });
-
-    console.log(`Onboarding completed for ${employeeName}: ${results.assigned} assigned, ${results.created} created, ${results.errors.length} errors`);
 
   } catch (error) {
     const errorMessage = `Failed to complete onboarding for ${employeeName}: ${error instanceof Error ? error.message : 'Unknown error'}`;

@@ -9,12 +9,9 @@ export async function GET(request: NextRequest) {
     if (!approverId) {
       return NextResponse.json({ error: 'Approver ID is required' }, { status: 400 });
     }
-
-    console.log(`Fetching pending workflows for approver: ${approverId}`);
     
     const workflows = await getPendingOperationalWorkflows(approverId);
     
-    console.log(`Found ${workflows.length} pending workflows`);
     return NextResponse.json(workflows);
 
   } catch (error) {

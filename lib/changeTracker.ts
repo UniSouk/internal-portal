@@ -47,7 +47,6 @@ export async function trackChanges(data: ChangeTrackingData) {
     const changes = calculateFieldChanges(data.oldData, data.newData);
     
     if (changes.length === 0) {
-      console.log('No changes detected, skipping tracking');
       return;
     }
 
@@ -86,8 +85,6 @@ export async function trackChanges(data: ChangeTrackingData) {
       ...(data.entityType === 'DOCUMENT' && { documentId: data.entityId }),
       ...(data.entityType === 'APPROVAL_WORKFLOW' && { workflowId: data.entityId })
     });
-
-    console.log(`✅ Tracked ${changes.length} changes to ${data.entityType} ${data.entityName} by ${performerInfo.name} (${performerInfo.role})`);
 
   } catch (error) {
     console.error('❌ Failed to track changes:', error);

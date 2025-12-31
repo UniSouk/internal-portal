@@ -74,11 +74,9 @@ export default function ApprovalsPage() {
   // Check if user has approval authority
   const hasApprovalAuthority = user && ['CEO', 'CTO', 'HR', 'MANAGER'].includes(user.role);
 
-    useEffect(() => {
+  useEffect(() => {
     fetchWorkflows();
   }, [pagination.currentPage, pagination.itemsPerPage]);
-
-  // If user doesn't have approval authority, show access denied
 
 
   const fetchWorkflows = async () => {
@@ -227,7 +225,7 @@ export default function ApprovalsPage() {
 
   if (loading) {
     return (
-      <ProtectedRoute>
+      <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER']}>
         <div className="min-h-screen flex items-center justify-center">
           <div className="flex flex-col items-center space-y-4">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -238,34 +236,8 @@ export default function ApprovalsPage() {
     );
   }
 
-    if (!hasApprovalAuthority) {
-    return (
-      <ProtectedRoute>
-        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mb-6">
-              <svg className="w-12 h-12 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
-            <p className="text-gray-600 mb-6 max-w-md mx-auto">
-              You don't have permission to access this page.
-            </p>
-            <button
-              onClick={() => window.history.back()}
-              className="px-6 py-2 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-700"
-            >
-              Go Back
-            </button>
-          </div>
-        </div>
-      </ProtectedRoute>
-    );
-  }
-
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER']}>
       <div className="min-h-screen bg-gray-50">
         {NotificationComponent}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">

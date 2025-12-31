@@ -362,7 +362,7 @@ export default function PoliciesPage() {
 
   if (loading) {
     return (
-      <ProtectedRoute>
+      <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER', 'HR_MANAGER', 'ENGINEERING_MANAGER']}>
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
           <div className="flex flex-col items-center space-y-4">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
@@ -374,7 +374,7 @@ export default function PoliciesPage() {
   }
 
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER', 'HR_MANAGER', 'ENGINEERING_MANAGER']}>
       <div className="min-h-screen bg-gray-50">
       {NotificationComponent}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -1100,6 +1100,7 @@ export default function PoliciesPage() {
             </div>
           </div>
         )}
+      </div>
       </div>
     </ProtectedRoute>
   );

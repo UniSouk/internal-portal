@@ -121,7 +121,6 @@ export async function getOperationalApprover(workflowType: string, amount: numbe
 
     // If no approver found (excluding requester), allow self-approval for policy workflows
     if (approvers.length === 0 && workflowType === 'POLICY_UPDATE_REQUEST') {
-      console.log('No external approver found for policy workflow, allowing self-approval');
       approvers = await prisma.employee.findMany({
         where: {
           role: { in: approverRoles as any },

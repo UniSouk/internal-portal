@@ -20,9 +20,8 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
     category: '',
     description: '',
     owner: getCompanyName(), // Company owns all resources
-    totalQuantity: 1, // Default quantity
     status: 'ACTIVE',
-    defaultPermission: 'READ', // Default permission for software/cloud resources
+    quantity: 1, // For Cloud resources
     
     // Physical asset fields
     serialNumber: '',
@@ -65,9 +64,42 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
     updateVersion: ''
   });
 
+  // Metadata state for Software/Cloud resources
+  const [metadataFields, setMetadataFields] = useState<Array<{key: string, value: string}>>([
+    { key: '', value: '' }
+  ]);
+
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(false);
   const [ceoInfo, setCeoInfo] = useState<any>(null);
+
+  // Reset metadata fields when resource type changes
+  const handleTypeChange = (newType: string) => {
+    setFormData(prev => ({ ...prev, type: newType }));
+    
+    // Reset metadata fields for Software/Cloud resources
+    if (newType === 'SOFTWARE' || newType === 'CLOUD') {
+      setMetadataFields([{ key: '', value: '' }]);
+    }
+  };
+
+  // Metadata helper functions
+  const addMetadataField = () => {
+    setMetadataFields([...metadataFields, { key: '', value: '' }]);
+  };
+
+  const removeMetadataField = (index: number) => {
+    if (metadataFields.length > 1) {
+      setMetadataFields(metadataFields.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateMetadataField = (index: number, field: 'key' | 'value', newValue: string) => {
+    const updated = metadataFields.map((item, i) => 
+      i === index ? { ...item, [field]: newValue } : item
+    );
+    setMetadataFields(updated);
+  };
 
   useEffect(() => {
     fetchCeoInfo();
@@ -85,9 +117,19 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
         value: resource.value || '',
         monthlyRate: resource.monthlyRate || '',
         annualRate: resource.annualRate || '',
-        totalQuantity: resource.totalQuantity || 1,
-        defaultPermission: resource.defaultPermission || 'READ'
+        quantity: resource.quantity || 1
       });
+
+      // Initialize metadata fields if resource has metadata
+      if (resource.metadata && typeof resource.metadata === 'object') {
+        const metadataEntries = Object.entries(resource.metadata).map(([key, value]) => ({
+          key,
+          value: String(value)
+        }));
+        if (metadataEntries.length > 0) {
+          setMetadataFields(metadataEntries);
+        }
+      }
     }
   }, [resource]);
 
@@ -108,18 +150,19 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
     e.preventDefault();
     setLoading(true);
 
-    // Validate total quantity
-    const totalQuantity = parseInt(formData.totalQuantity.toString()) || 0;
-    if (totalQuantity <= 0) {
-      showNotification('warning', 'Invalid Quantity', 'Total quantity must be greater than 0.');
-      setLoading(false);
-      return;
-    }
-
     try {
+      // Build metadata object from key-value pairs for Software/Cloud resources
+      const metadata: Record<string, string> = {};
+      if (formData.type === 'SOFTWARE' || formData.type === 'CLOUD') {
+        metadataFields.forEach(field => {
+          if (field.key.trim() && field.value.trim()) {
+            metadata[field.key.trim()] = field.value.trim();
+          }
+        });
+      }
+
       const submitData = {
         ...formData,
-        totalQuantity,
         value: formData.value ? parseFloat(formData.value) : null,
         monthlyRate: formData.monthlyRate ? parseFloat(formData.monthlyRate) : null,
         annualRate: formData.annualRate ? parseFloat(formData.annualRate) : null,
@@ -129,10 +172,11 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
         subscriptionExpiry: formData.subscriptionExpiry || null,
         lastMaintenance: formData.lastMaintenance || null,
         nextMaintenance: formData.nextMaintenance || null,
-        lastUpdate: formData.lastUpdate || null
+        lastUpdate: formData.lastUpdate || null,
+        quantity: formData.type === 'CLOUD' ? parseInt(formData.quantity.toString()) || 1 : null,
+        metadata: Object.keys(metadata).length > 0 ? metadata : null
       };
 
-      console.log('Submitting resource data:', submitData);
       onSubmit(submitData);
     } catch (error) {
       console.error('Error submitting form:', error);
@@ -395,52 +439,49 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
               />
             </div>
 
-            {/* Default Permission Level for Software */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Default Permission Level
-                <span className="text-sm text-gray-500 block">Default access level when assigned to employees</span>
-              </label>
-              <ElegantSelect
-                options={[
-                  { 
-                    value: 'READ', 
-                    label: 'Read Only',
-                    icon: (
-                      <svg className="h-4 w-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            {/* Software Metadata Section */}
+            <div className="col-span-2">
+              <h4 className="text-sm font-medium text-gray-900 mb-3">Software Specifications (Optional)</h4>
+              <div className="space-y-3">
+                {metadataFields.map((field, index) => (
+                  <div key={index} className="flex space-x-2">
+                    <input
+                      type="text"
+                      placeholder="Specification name (e.g., License Type, Max Users, Features)"
+                      value={field.key}
+                      onChange={(e) => updateMetadataField(index, 'key', e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Value (e.g., Per-seat, 50, Advanced Analytics)"
+                      value={field.value}
+                      onChange={(e) => updateMetadataField(index, 'value', e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeMetadataField(index)}
+                      className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                      disabled={metadataFields.length === 1}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
-                    ),
-                    description: 'View and read data only'
-                  },
-                  { 
-                    value: 'WRITE', 
-                    label: 'Write Access',
-                    icon: (
-                      <svg className="h-4 w-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    ),
-                    description: 'Create and modify data'
-                  },
-                  { 
-                    value: 'EDIT', 
-                    label: 'Full Edit',
-                    icon: (
-                      <svg className="h-4 w-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
-                      </svg>
-                    ),
-                    description: 'Full editing capabilities including delete'
-                  }
-                ]}
-                value={formData.defaultPermission}
-                onChange={(value) => setFormData(prev => ({ ...prev, defaultPermission: value }))}
-                placeholder="Select default permission"
-                className="w-full"
-                size="md"
-              />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={addMetadataField}
+                  className="flex items-center space-x-2 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  <span>Add Specification</span>
+                </button>
+              </div>
             </div>
           </>
         );
@@ -545,52 +586,64 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
               />
             </div>
 
-            {/* Default Permission Level for Cloud */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Default Permission Level
-                <span className="text-sm text-gray-500 block">Default access level when assigned to employees</span>
-              </label>
-              <ElegantSelect
-                options={[
-                  { 
-                    value: 'READ', 
-                    label: 'Read Only',
-                    icon: (
-                      <svg className="h-4 w-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    ),
-                    description: 'View and read data only'
-                  },
-                  { 
-                    value: 'WRITE', 
-                    label: 'Write Access',
-                    icon: (
-                      <svg className="h-4 w-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    ),
-                    description: 'Create and modify data'
-                  },
-                  { 
-                    value: 'EDIT', 
-                    label: 'Full Edit',
-                    icon: (
-                      <svg className="h-4 w-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
-                      </svg>
-                    ),
-                    description: 'Full editing capabilities including delete'
-                  }
-                ]}
-                value={formData.defaultPermission}
-                onChange={(value) => setFormData(prev => ({ ...prev, defaultPermission: value }))}
-                placeholder="Select default permission"
-                className="w-full"
-                size="md"
+              <label className="block text-sm font-medium text-gray-700 mb-2">Quantity <span className="text-red-500">*</span></label>
+              <input
+                type="number"
+                name="quantity"
+                value={formData.quantity}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                placeholder="e.g., 5, 10, 999999 for unlimited"
+                min="1"
+                required
               />
+              <p className="text-xs text-gray-500 mt-1">Number of instances/licenses available (use 999999 for unlimited)</p>
+            </div>
+
+            {/* Cloud Metadata Section */}
+            <div className="col-span-2">
+              <h4 className="text-sm font-medium text-gray-900 mb-3">Cloud Service Specifications (Optional)</h4>
+              <div className="space-y-3">
+                {metadataFields.map((field, index) => (
+                  <div key={index} className="flex space-x-2">
+                    <input
+                      type="text"
+                      placeholder="Specification name (e.g., CPU Cores, RAM, Storage)"
+                      value={field.key}
+                      onChange={(e) => updateMetadataField(index, 'key', e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Value (e.g., 4, 16GB, 100GB SSD)"
+                      value={field.value}
+                      onChange={(e) => updateMetadataField(index, 'value', e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeMetadataField(index)}
+                      className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                      disabled={metadataFields.length === 1}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={addMetadataField}
+                  className="flex items-center space-x-2 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  <span>Add Specification</span>
+                </button>
+              </div>
             </div>
           </>
         );
@@ -678,7 +731,7 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
                     }
                   ]}
                   value={formData.type}
-                  onChange={(value) => setFormData(prev => ({ ...prev, type: value }))}
+                  onChange={(value) => handleTypeChange(value)}
                   placeholder="🔒 Select resource type to unlock fields"
                   className="w-full"
                   size="md"
@@ -696,26 +749,6 @@ export default function ResourceForm({ resource, onSubmit, onCancel }: ResourceF
                   className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${isFieldDisabled ? 'bg-gray-100 text-gray-500' : ''}`}
                   placeholder="e.g., Laptop, Development Tool, Infrastructure"
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Total Quantity <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  name="totalQuantity"
-                  value={formData.totalQuantity}
-                  onChange={handleChange}
-                  required
-                  min="1"
-                  disabled={isFieldDisabled}
-                  className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${isFieldDisabled ? 'bg-gray-100 text-gray-500' : ''}`}
-                  placeholder="e.g., 5"
-                />
-                <p className="mt-1 text-xs text-gray-500">
-                  How many units of this resource does the company own?
-                </p>
               </div>
 
               {/* Company Ownership Info */}

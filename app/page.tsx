@@ -319,7 +319,7 @@ export default function Home() {
             </div>
 
             {/* Policy Management */}
-            <div className="bg-white rounded-lg shadow p-6">
+           {permissions?.canApproveWorkflows && <div className="bg-white rounded-lg shadow p-6">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
                   <div className="w-8 h-8 bg-red-500 rounded-md flex items-center justify-center">
@@ -343,37 +343,10 @@ export default function Home() {
                   View Policies →
                 </Link>
               </div>
-            </div>
+            </div>}
             
 
-            {/* Approval Workflows */}
-            {/* <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-indigo-500 rounded-md flex items-center justify-center">
-                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                    </svg>
-                  </div>
-                </div>
-                <div className="ml-4">
-                  <h3 className="text-lg font-medium text-gray-900">
-                    {permissions?.canApproveWorkflows ? 'Approval Workflows' : 'My Approvals'}
-                  </h3>
-                  <p className="text-sm text-gray-500">
-                    {permissions?.canApproveWorkflows 
-                      ? 'Manage all approval processes and connected workflows' 
-                      : 'Track your submitted requests and their approval status'
-                    }
-                  </p>
-                </div>
-              </div>
-              <div className="mt-4">
-                <Link href="/approvals" className="text-indigo-600 hover:text-indigo-500 text-sm font-medium">
-                  View Approvals →
-                </Link>
-              </div>
-            </div> */}
+            
             {permissions?.canApproveWorkflows && (
               <>
               <div className="bg-white rounded-lg shadow p-6">

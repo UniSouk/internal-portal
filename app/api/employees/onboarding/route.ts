@@ -80,9 +80,7 @@ export async function POST(request: NextRequest) {
 
     // Assign onboarding resources
     const performedBy = currentUser.id;
-
-    console.log(`Assigning onboarding resources to ${targetEmployee.name} (requested by ${currentUser.name})`);
-
+    
     const onboardingResults = await assignOnboardingResources(
       targetEmployee.id,
       targetEmployee.name,

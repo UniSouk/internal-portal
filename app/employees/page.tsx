@@ -249,6 +249,13 @@ export default function EmployeesPage() {
       } else {
         const errorData = await response.json();
         
+        // Handle CEO deletion attempt
+        if (response.status === 403 && errorData.error === 'Cannot delete CEO') {
+          showNotification('error', 'CEO Protection', errorData.message || 'The CEO position cannot be deleted as it is critical for system operations.');
+          setDeleteConfirm(null);
+          return;
+        }
+        
         // Show detailed error message if available
         if (errorData.details) {
           const details = errorData.details;
@@ -561,18 +568,34 @@ export default function EmployeesPage() {
                             </div>
                           </div>
 
-                          {/* Delete Employee */}
-                          <div className="relative group">
-                            <button 
-                              onClick={() => setDeleteConfirm(employee.id)}
-                              className="inline-flex items-center justify-center w-8 h-8 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-full transition-colors"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
-                              Delete Employee
+                          {/* Delete Employee - Hidden for CEO */}
+                          {employee.role !== 'CEO' && (
+                            <div className="relative group">
+                              <button 
+                                onClick={() => setDeleteConfirm(employee.id)}
+                                className="inline-flex items-center justify-center w-8 h-8 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-full transition-colors"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                                Delete Employee
+                              </div>
                             </div>
-                          </div>
+                          )}
+                          
+                          {/* CEO Protection Message */}
+                          {employee.role === 'CEO' && (
+                            <div className="relative group">
+                              <div className="inline-flex items-center justify-center w-8 h-8 text-gray-400 cursor-not-allowed rounded-full">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                </svg>
+                              </div>
+                              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                                CEO cannot be deleted
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -652,7 +675,7 @@ export default function EmployeesPage() {
       {/* Dependencies Modal */}
       {viewingDependencies && dependencies && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-10 mx-auto p-5 border w-4/5 max-w-4xl shadow-lg rounded-md bg-white">
+          <div className="relative top-10 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
             <div className="mt-3">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-medium text-gray-900">Employee Dependencies</h3>
@@ -661,8 +684,9 @@ export default function EmployeesPage() {
                     <button
                       onClick={() => handleReassignOwnership(viewingDependencies)}
                       className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                      title="Reassigns ownership of policies, documents, resources (custodianship), and subordinates. Does not reassign resource assignments."
                     >
-                      Reassign All
+                      Reassign Ownership
                     </button>
                   )}
                   <button
@@ -679,7 +703,7 @@ export default function EmployeesPage() {
                 </div>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
                 {dependencies.policies?.length > 0 && (
                   <div className="bg-blue-50 p-4 rounded-lg">
                     <h4 className="font-medium text-blue-900 mb-2">Policies ({dependencies.policies.length})</h4>
@@ -704,10 +728,43 @@ export default function EmployeesPage() {
                 
                 {dependencies.resources?.length > 0 && (
                   <div className="bg-yellow-50 p-4 rounded-lg">
-                    <h4 className="font-medium text-yellow-900 mb-2">Resources ({dependencies.resources.length})</h4>
+                    <h4 className="font-medium text-yellow-900 mb-2">Managed Resources ({dependencies.resources.length})</h4>
+                    <p className="text-xs text-yellow-700 mb-2">Resources where this employee is the custodian</p>
                     <ul className="text-sm text-yellow-800 space-y-1">
                       {dependencies.resources.map((resource: any) => (
                         <li key={resource.id}>• {resource.name} ({resource.type})</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {dependencies.assignedResources?.length > 0 && (
+                  <div className="bg-purple-50 p-4 rounded-lg">
+                    <h4 className="font-medium text-purple-900 mb-2">Assigned Resources ({dependencies.assignedResources.length})</h4>
+                    <p className="text-xs text-purple-700 mb-2">Resources allocated to this employee</p>
+                    <div className="bg-purple-100 border border-purple-200 rounded p-2 mb-2">
+                      <p className="text-xs text-purple-800">
+                        <strong>Note:</strong> These resources are assigned to the employee and should be returned before deletion. 
+                        Use the "Return" option in the Resources section to unallocate them.
+                      </p>
+                    </div>
+                    <ul className="text-sm text-purple-800 space-y-1">
+                      {dependencies.assignedResources.map((assignment: any) => (
+                        <li key={assignment.id} className="flex flex-col">
+                          <span>• {assignment.resource.name} ({assignment.resource.type})</span>
+                          {assignment.item?.serialNumber && (
+                            <span className="text-xs text-purple-600 ml-2">Serial: {assignment.item.serialNumber}</span>
+                          )}
+                          {assignment.item?.hostname && (
+                            <span className="text-xs text-purple-600 ml-2">Hostname: {assignment.item.hostname}</span>
+                          )}
+                          {assignment.item?.licenseKey && (
+                            <span className="text-xs text-purple-600 ml-2">License: {assignment.item.licenseKey}</span>
+                          )}
+                          <span className="text-xs text-purple-600 ml-2">
+                            Assigned: {new Date(assignment.assignedAt).toLocaleDateString()}
+                          </span>
+                        </li>
                       ))}
                     </ul>
                   </div>
@@ -736,7 +793,7 @@ export default function EmployeesPage() {
                 )}
               </div>
               
-              {Object.keys(dependencies).every(key => !dependencies[key]?.length) && (
+              {Object.keys(dependencies).filter(key => key !== 'employee').every(key => !dependencies[key]?.length) && (
                 <div className="text-center py-8">
                   <div className="text-green-600 mb-2">
                     <svg className="mx-auto h-12 w-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">

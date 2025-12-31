@@ -176,7 +176,7 @@ export default function DocumentsPage() {
 
   if (loading) {
     return (
-      <ProtectedRoute>
+      <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER', 'HR_MANAGER', 'ENGINEERING_MANAGER']}>
         <div className="min-h-screen flex items-center justify-center">
           <div className="text-lg">Loading documents...</div>
         </div>
@@ -185,7 +185,7 @@ export default function DocumentsPage() {
   }
 
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requiredRoles={['CEO', 'CTO', 'HR', 'MANAGER', 'HR_MANAGER', 'ENGINEERING_MANAGER']}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
@@ -403,6 +403,7 @@ export default function DocumentsPage() {
           </div>
         </div>
       )}
+      </div>
     </ProtectedRoute>
   );
 }

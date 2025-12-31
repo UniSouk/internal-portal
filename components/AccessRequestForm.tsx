@@ -33,7 +33,6 @@ export default function AccessRequestForm({ onSubmit, onCancel }: AccessRequestF
     employeeId: user?.id || '',
     resourceId: '',
     hardwareRequest: '',
-    permissionLevel: 'READ',
     justification: ''
   });
 
@@ -52,7 +51,7 @@ export default function AccessRequestForm({ onSubmit, onCancel }: AccessRequestF
     if (requestType === 'software') {
       setFormData(prev => ({ ...prev, hardwareRequest: '' }));
     } else if (requestType === 'hardware') {
-      setFormData(prev => ({ ...prev, resourceId: '', permissionLevel: 'READ' }));
+      setFormData(prev => ({ ...prev, resourceId: '' }));
     }
   }, [requestType]);
 
@@ -75,7 +74,8 @@ export default function AccessRequestForm({ onSubmit, onCancel }: AccessRequestF
   const fetchResources = async () => {
     setResourcesLoading(true);
     try {
-      const response = await fetch('/api/resources?page=1&limit=1000');
+      // Add forAccessRequest=true to show ALL resources for access requests
+      const response = await fetch('/api/resources?page=1&limit=1000&forAccessRequest=true');
       if (response.ok) {
         const data = await response.json();
         // Handle paginated response structure
@@ -137,13 +137,6 @@ export default function AccessRequestForm({ onSubmit, onCancel }: AccessRequestF
   );
 
   const selectedResource = accessibleResources.find(res => res.id === formData.resourceId);
-
-  const permissionDescriptions = {
-    READ: 'View and read data only',
-    WRITE: 'Create and modify data',
-    EDIT: 'Full editing capabilities including delete',
-    ADMIN: 'Administrative access with user management'
-  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
@@ -493,75 +486,6 @@ export default function AccessRequestForm({ onSubmit, onCancel }: AccessRequestF
               </div>
             )}
 
-            {/* Permission Level Selection - Only show for software/cloud */}
-            {requestType === 'software' && formData.resourceId && selectedResource && (
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 animate-fadeIn">
-                <label className="block text-sm font-semibold text-gray-900 mb-4">
-                  <div className="flex items-center">
-                    <div className="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center mr-3">
-                      <svg className="h-4 w-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.031 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                      </svg>
-                    </div>
-                    Access Level for {selectedResource.name} <span className="text-red-500">*</span>
-                  </div>
-                </label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {Object.entries(permissionDescriptions).map(([level, description]) => (
-                    <div 
-                      key={level} 
-                      className={`border-2 rounded-lg p-4 cursor-pointer transition-all duration-200 hover:shadow-md ${
-                        formData.permissionLevel === level 
-                          ? 'border-indigo-500 bg-indigo-50 shadow-md' 
-                          : 'border-gray-200 hover:border-indigo-300 bg-white'
-                      }`} 
-                      onClick={() => setFormData(prev => ({ ...prev, permissionLevel: level }))}
-                    >
-                      <div className="flex items-start">
-                        <input
-                          type="radio"
-                          id={`permission-${level}`}
-                          name="permissionLevel"
-                          value={level}
-                          checked={formData.permissionLevel === level}
-                          onChange={handleChange}
-                          className="mt-1 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300"
-                        />
-                        <div className="ml-3 flex-1">
-                          <label htmlFor={`permission-${level}`} className="text-sm font-semibold text-gray-900 cursor-pointer">
-                            {level}
-                          </label>
-                          <p className="text-xs text-gray-600 mt-1">{description}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                
-                {/* Contextual help based on resource type */}
-                <div className="mt-4 p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
-                  <div className="flex items-start">
-                    <svg className="h-5 w-5 text-indigo-500 mt-0.5 flex-shrink-0 mr-3" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                    </svg>
-                    <div>
-                      <h5 className="text-sm font-semibold text-indigo-900 mb-1">
-                        For {selectedResource.type} services:
-                      </h5>
-                      <p className="text-sm text-indigo-800">
-                        {selectedResource.type === 'SOFTWARE' && (
-                          'Choose READ for viewing data, WRITE for creating content, EDIT for full modification rights, or ADMIN for user management.'
-                        )}
-                        {selectedResource.type === 'CLOUD' && (
-                          'Choose READ for monitoring/viewing, WRITE for deploying/creating resources, EDIT for modifying configurations, or ADMIN for account management.'
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* Justification */}
             <div className="bg-white border border-gray-200 rounded-xl p-6">
               <label className="block text-sm font-semibold text-gray-900 mb-3">
@@ -582,7 +506,7 @@ export default function AccessRequestForm({ onSubmit, onCancel }: AccessRequestF
                 rows={5}
                 className="block w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors resize-none"
                 placeholder={`Please provide a detailed justification for this request. Include:
-${requestType === 'software' && formData.resourceId ? `- Why you need ${formData.permissionLevel.toLowerCase()} access to ${selectedResource?.name}` : ''}
+${requestType === 'software' && formData.resourceId ? `- Why you need access to ${selectedResource?.name}` : ''}
 ${requestType === 'hardware' && formData.hardwareRequest ? `- Why you need ${formData.hardwareRequest}` : ''}
 - How long you'll need it
 - What you plan to do with it

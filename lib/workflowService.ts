@@ -17,7 +17,6 @@ export interface OperationalWorkflowRequest {
 
 export async function createOperationalWorkflow(request: OperationalWorkflowRequest) {
   try {
-    console.log(`Creating operational workflow: ${request.type}`);
 
     // Get appropriate approver based on operational rules
     const approverId = await getOperationalApprover(request.type, request.amount || 0, request.requesterId);
@@ -119,7 +118,6 @@ export async function createOperationalWorkflow(request: OperationalWorkflowRequ
       workflowId: workflow.id
     });
 
-    console.log(`Operational workflow created successfully: ${workflow.id}`);
     return workflow;
 
   } catch (error) {

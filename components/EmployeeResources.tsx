@@ -83,8 +83,6 @@ export default function EmployeeResources({ employeeId, employeeName, isOpen, on
 
   if (!isOpen) return null;
 
-  console.log("ress: ", resources);
-
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
       <div className="relative top-10 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">

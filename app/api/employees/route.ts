@@ -113,6 +113,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
+    // Validate manager requirement
+    if (role !== 'CEO' && !managerId) {
+      return NextResponse.json({ 
+        error: 'Manager is required', 
+        message: 'All employees except CEO must have a manager assigned.',
+        field: 'managerId',
+        code: 'MANAGER_REQUIRED'
+      }, { status: 400 });
+    }
+
+    // Validate that manager exists if provided
+    if (managerId) {
+      const manager = await prisma.employee.findUnique({
+        where: { id: managerId },
+        select: { id: true, name: true }
+      });
+
+      if (!manager) {
+        return NextResponse.json({ 
+          error: 'Invalid manager', 
+          message: 'The selected manager does not exist.',
+          field: 'managerId',
+          code: 'INVALID_MANAGER'
+        }, { status: 400 });
+      }
+    }
+
     const createdBy = currentUser.id;
 
     const employee = await prisma.employee.create({
@@ -165,7 +192,6 @@ export async function POST(request: NextRequest) {
 
     // Automatically assign onboarding resources
     try {
-      console.log(`Starting automatic onboarding resource assignment for ${employee.name}`);
       
       const onboardingResults = await assignOnboardingResources(
         employee.id,
@@ -175,7 +201,6 @@ export async function POST(request: NextRequest) {
         createdBy
       );
 
-      console.log(`Onboarding completed for ${employee.name}:`, onboardingResults);
 
       // Add onboarding results to the response
       return NextResponse.json({
@@ -282,6 +307,33 @@ export async function PUT(request: NextRequest) {
 
     const body = await request.json();
 
+    // Validate manager requirement
+    if (body.role !== 'CEO' && !body.managerId) {
+      return NextResponse.json({ 
+        error: 'Manager is required', 
+        message: 'All employees except CEO must have a manager assigned.',
+        field: 'managerId',
+        code: 'MANAGER_REQUIRED'
+      }, { status: 400 });
+    }
+
+    // Validate that manager exists if provided
+    if (body.managerId) {
+      const manager = await prisma.employee.findUnique({
+        where: { id: body.managerId },
+        select: { id: true, name: true }
+      });
+
+      if (!manager) {
+        return NextResponse.json({ 
+          error: 'Invalid manager', 
+          message: 'The selected manager does not exist.',
+          field: 'managerId',
+          code: 'INVALID_MANAGER'
+        }, { status: 400 });
+      }
+    }
+
     // Get current employee data for change tracking
     const currentEmployee = await prisma.employee.findUnique({
       where: { id }
@@ -347,9 +399,6 @@ export async function DELETE(request: NextRequest) {
     const id = searchParams.get('id');
     const deletedBy = searchParams.get('deletedBy') || 'system';
 
-    console.log('DELETE request for employee ID:', id);
-    console.log('Deletion requested by:', currentUser.name, '(', currentUser.id, ')');
-
     if (!id) {
       return NextResponse.json({ error: 'Employee ID is required' }, { status: 400 });
     }
@@ -384,7 +433,17 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
 
-    console.log('Found employee:', employee);
+    // PROTECTION: Prevent deletion of CEO
+    if (employee.role === 'CEO') {
+      return NextResponse.json({ 
+        error: 'Cannot delete CEO', 
+        message: 'The CEO position cannot be deleted as it is critical for system operations. You can transfer the CEO role to another employee first if needed.' 
+      }, { status: 403 });
+    }
+
+    if (!employee) {
+      return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+    }
 
     // Log the deletion attempt
     try {
@@ -419,70 +478,59 @@ export async function DELETE(request: NextRequest) {
 
     // Handle foreign key dependencies before deletion
     try {
-      console.log('Handling employee dependencies before deletion...');
       
       // 1. Update access requests where this employee is the requester
       const accessRequestsAsRequester = await prisma.access.updateMany({
         where: { employeeId: id },
         data: { employeeId: fallbackUserId } // Transfer to CEO
       });
-      console.log(`Updated ${accessRequestsAsRequester.count} access requests where employee was requester`);
 
       // 2. Update access requests where this employee is the approver
       const accessRequestsAsApprover = await prisma.access.updateMany({
         where: { approverId: id },
         data: { approverId: fallbackUserId } // Transfer to CEO
       });
-      console.log(`Updated ${accessRequestsAsApprover.count} access requests where employee was approver`);
 
       // 3. Update approval workflows where this employee is the requester
       const workflowsAsRequester = await prisma.approvalWorkflow.updateMany({
         where: { requesterId: id },
         data: { requesterId: fallbackUserId }
       });
-      console.log(`Updated ${workflowsAsRequester.count} workflows where employee was requester`);
 
       // 4. Update approval workflows where this employee is the approver
       const workflowsAsApprover = await prisma.approvalWorkflow.updateMany({
         where: { approverId: id },
         data: { approverId: fallbackUserId }
       });
-      console.log(`Updated ${workflowsAsApprover.count} workflows where employee was approver`);
 
       // 5. Update policies owned by this employee
       const policiesUpdated = await prisma.policy.updateMany({
         where: { ownerId: id },
         data: { ownerId: fallbackUserId }
       });
-      console.log(`Updated ${policiesUpdated.count} policies owned by employee`);
 
       // 6. Update documents owned by this employee
       const documentsUpdated = await prisma.document.updateMany({
         where: { ownerId: id },
         data: { ownerId: fallbackUserId }
       });
-      console.log(`Updated ${documentsUpdated.count} documents owned by employee`);
 
       // 7. Update resources managed by this employee (transfer custodianship)
       const resourcesUpdated = await prisma.resource.updateMany({
         where: { custodianId: id },
         data: { custodianId: fallbackUserId }
       });
-      console.log(`Updated ${resourcesUpdated.count} resources managed by employee`);
 
       // 8. Update subordinates' manager reference
       const subordinatesUpdated = await prisma.employee.updateMany({
         where: { managerId: id },
         data: { managerId: null }
       });
-      console.log(`Updated ${subordinatesUpdated.count} subordinates' manager reference`);
 
       // Now delete the employee
       await prisma.employee.delete({
         where: { id }
       });
-
-      console.log('Employee deleted successfully after handling dependencies');
       
       // Log successful deletion using authenticated user
       try {
@@ -568,7 +616,6 @@ export async function DELETE(request: NextRequest) {
       
       // If direct deletion fails, let's handle the constraints manually
       if (deleteError.code === 'P2003') {
-        console.log('Foreign key constraint error, handling dependencies...');
         
         try {
           // CRITICAL CHANGE: Do NOT delete audit logs and timeline activities
@@ -639,8 +686,6 @@ export async function DELETE(request: NextRequest) {
               where: { id }
             });
           });
-
-          console.log('Employee deleted successfully after handling constraints');
           
           // Log successful deletion after constraint handling using authenticated user
           try {

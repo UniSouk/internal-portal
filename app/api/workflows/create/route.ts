@@ -17,8 +17,6 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    console.log(`Creating operational workflow: ${type} for user: ${requesterId}`);
-
     let workflow;
 
     switch (type) {
@@ -44,7 +42,6 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
     }
 
-    console.log(`Operational workflow created successfully: ${workflow.id}`);
     return NextResponse.json(workflow, { status: 201 });
 
   } catch (error) {

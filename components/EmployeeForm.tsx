@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Role } from '@/types';
 import ElegantSelect from '@/components/ElegantSelect';
 
@@ -25,6 +25,17 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
   });
 
   const [emailError, setEmailError] = useState('');
+  const [managerError, setManagerError] = useState('');
+
+  const validateManager = (role: string, managerId: string) => {
+    if (role !== 'CEO' && !managerId) {
+      setManagerError('Manager is required for all roles except CEO');
+      return false;
+    }
+    
+    setManagerError('');
+    return true;
+  };
 
   const validateEmail = (email: string) => {
     // Check if email is already taken by another employee
@@ -42,11 +53,23 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
     return true;
   };
 
+  // Validate manager field on component mount if editing
+  useEffect(() => {
+    if (editingEmployee) {
+      validateManager(editingEmployee.role, editingEmployee.managerId || '');
+    }
+  }, [editingEmployee]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
     // Validate email before submission
     if (!validateEmail(formData.email)) {
+      return;
+    }
+    
+    // Validate manager before submission
+    if (!validateManager(formData.role, formData.managerId)) {
       return;
     }
     
@@ -61,14 +84,21 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     
-    setFormData({
+    const newFormData = {
       ...formData,
       [name]: value
-    });
+    };
+    
+    setFormData(newFormData);
     
     // Validate email on change
     if (name === 'email') {
       validateEmail(value);
+    }
+    
+    // Validate manager when role changes
+    if (name === 'role') {
+      validateManager(value, newFormData.managerId);
     }
   };
 
@@ -186,7 +216,11 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
                       }))
                     ])}
                     value={formData.role}
-                    onChange={(value) => setFormData({ ...formData, role: value })}
+                    onChange={(value) => {
+                      const newFormData = { ...formData, role: value };
+                      setFormData(newFormData);
+                      validateManager(value, newFormData.managerId);
+                    }}
                     placeholder="Select a role"
                     searchable={true}
                     className="w-full"
@@ -208,10 +242,12 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Manager</label>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Manager {formData.role !== 'CEO' && <span className="text-red-500">*</span>}
+                  </label>
                   <ElegantSelect
                     options={[
-                      { value: '', label: 'No Manager' },
+                      ...(formData.role === 'CEO' ? [{ value: '', label: 'No Manager (CEO Role)' }] : []),
                       ...potentialManagers.map(manager => ({
                         value: manager.id,
                         label: `${manager.name} (${manager.department})`,
@@ -226,13 +262,30 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
                       }))
                     ]}
                     value={formData.managerId}
-                    onChange={(value) => setFormData({ ...formData, managerId: value })}
-                    placeholder="Select a manager"
+                    onChange={(value) => {
+                      const newFormData = { ...formData, managerId: value };
+                      setFormData(newFormData);
+                      validateManager(newFormData.role, value);
+                    }}
+                    placeholder={formData.role === 'CEO' ? 'No manager required for CEO' : 'Select a manager *'}
                     searchable={true}
-                    showClearButton={true}
+                    showClearButton={formData.role === 'CEO'}
                     className="w-full"
                     size="md"
                   />
+                  {formData.role !== 'CEO' && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      All employees except CEO must have a manager assigned
+                    </p>
+                  )}
+                  {managerError && (
+                    <p className="mt-1 text-sm text-red-600 flex items-center">
+                      <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {managerError}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -264,7 +317,7 @@ export default function EmployeeForm({ onSubmit, onCancel, employees, editingEmp
               </button>
               <button
                 type="submit"
-                disabled={submitting || !!emailError}
+                disabled={submitting || !!emailError || !!managerError}
                 className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? (

@@ -77,7 +77,6 @@ export async function POST(request: NextRequest) {
       resourceId, 
       hardwareRequest, // New field for hardware requests
       approverId,
-      permissionLevel,
       justification
     } = body;
 
@@ -141,9 +140,7 @@ export async function POST(request: NextRequest) {
     let finalApproverId = approverId || employee.managerId;
 
     // If no approver found, use fallback hierarchy: CTO -> CEO -> ADMIN
-    if (!finalApproverId) {
-      console.log('No manager found for employee, searching for fallback approver...');
-      
+    if (!finalApproverId) {      
       // Try CTO first
       const cto = await prisma.employee.findFirst({
         where: { role: 'CTO', status: 'ACTIVE' },
@@ -152,7 +149,6 @@ export async function POST(request: NextRequest) {
       
       if (cto) {
         finalApproverId = cto.id;
-        console.log(`Using CTO as approver: ${cto.name} (${cto.id})`);
       } else {
         // Try CEO if no CTO
         const ceo = await prisma.employee.findFirst({
@@ -162,7 +158,6 @@ export async function POST(request: NextRequest) {
         
         if (ceo) {
           finalApproverId = ceo.id;
-          console.log(`Using CEO as approver: ${ceo.name} (${ceo.id})`);
         } else {
           // Try ADMIN as last resort
           const admin = await prisma.employee.findFirst({
@@ -172,7 +167,6 @@ export async function POST(request: NextRequest) {
           
           if (admin) {
             finalApproverId = admin.id;
-            console.log(`Using ADMIN as approver: ${admin.name} (${admin.id})`);
           } else {
             return NextResponse.json({ 
               error: 'No approver available: Employee has no manager and no active CTO, CEO, or ADMIN found' 
@@ -189,7 +183,6 @@ export async function POST(request: NextRequest) {
         resourceId: resourceId || null, // Can be null for hardware-only requests
         hardwareRequest: hardwareRequest || null, // Store hardware request name
         approverId: finalApproverId,
-        permissionLevel: permissionLevel || 'READ',
         justification: justification || null,
         status: 'REQUESTED'
       }
@@ -233,7 +226,6 @@ export async function POST(request: NextRequest) {
         accessRequestId: accessRequest.id,
         resourceName: resourceName,
         resourceType: resourceType,
-        permissionLevel: permissionLevel || 'READ',
         justification: justification || '',
         hardwareRequest: hardwareRequest || null, // Include hardware request in workflow data
         isHardwareRequest: !!hardwareRequest,
@@ -241,7 +233,7 @@ export async function POST(request: NextRequest) {
         requestType: 'access_request'
       },
       title: `Access Request: ${resourceName}`,
-      description: `${employee.name} is requesting ${hardwareRequest ? 'hardware: ' + hardwareRequest : (permissionLevel || 'READ') + ' access to ' + resourceName + (resource ? ' (' + resource.type + ')' : '')}. ${justification ? 'Justification: ' + justification : ''}`,
+      description: `${employee.name} is requesting ${hardwareRequest ? 'hardware: ' + hardwareRequest : 'access to ' + resourceName + (resource ? ' (' + resource.type + ')' : '')}. ${justification ? 'Justification: ' + justification : ''}`,
       relatedEntityId: accessRequest.id
     });
 
@@ -479,6 +471,10 @@ export async function DELETE(request: NextRequest) {
     }
     
     const deletedBy = currentUser?.id || ceoUser?.id;
+    
+    if (!deletedBy) {
+      return NextResponse.json({ error: 'Unable to determine user for deletion' }, { status: 500 });
+    }
 
     // Get access request details before deletion for logging
     const accessRequest = await prisma.access.findUnique({
@@ -629,7 +625,7 @@ export async function DELETE(request: NextRequest) {
       
       const errorLoggedBy = currentUser?.id || ceoUser?.id;
       
-      if (id) {
+      if (errorLoggedBy && id) {
         await logTimelineActivity({
           entityType: 'ACCESS',
           entityId: id,

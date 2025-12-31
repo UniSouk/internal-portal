@@ -9,9 +9,6 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-
-    console.log(`Fetching employee with ID: ${id}`);
-
     const employee = await prisma.employee.findUnique({
       where: { id },
       select: {
@@ -39,7 +36,6 @@ export async function GET(
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
 
-    console.log(`Employee found: ${employee.name}`);
     return NextResponse.json(employee);
 
   } catch (error) {
