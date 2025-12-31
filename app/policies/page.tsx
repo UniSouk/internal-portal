@@ -517,7 +517,7 @@ export default function PoliciesPage() {
                   </label>
                   <ElegantSelect
                     options={[
-                      { value: '', label: 'All statuses' },
+                      { value: '', label: 'All status' },
                       { 
                         value: 'DRAFT', 
                         label: 'Draft',
@@ -557,7 +557,7 @@ export default function PoliciesPage() {
                     ]}
                     value={selectedStatus}
                     onChange={handleStatusSelect}
-                    placeholder="All statuses"
+                    placeholder="All status"
                     showClearButton={true}
                     className="w-full"
                     size="md"

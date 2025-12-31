@@ -235,7 +235,7 @@ export default function ResourceCatalogPage() {
   ];
 
   const statusOptions = [
-    { value: '', label: 'All Statuses' },
+    { value: '', label: 'All Status' },
     { value: 'ACTIVE', label: 'Active' },
     { value: 'RETURNED', label: 'Returned' },
     { value: 'LOST', label: 'Lost' },

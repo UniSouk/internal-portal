@@ -218,7 +218,7 @@ export default function PolicyForm({ onSubmit, onCancel, editingPolicy, isEditin
                     <option value="REVIEW">Ready for Review</option>
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
-                    Note: APPROVED, REJECTED, and PUBLISHED statuses are set automatically through the approval workflow
+                    Note: APPROVED, REJECTED, and PUBLISHED status are set automatically through the approval workflow
                   </p>
                 </div>
               </div>
