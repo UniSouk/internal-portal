@@ -553,6 +553,7 @@ function mapPrismaToEnhancedResource(resource: any): EnhancedResource {
     custodianId: resource.custodianId,
     status: resource.status,
     quantity: resource.quantity ?? undefined,
+    allocationType: resource.allocationType || 'EXCLUSIVE',
     metadata: resource.metadata ?? undefined,
     propertySchema: (resource.propertySchema as PropertyDefinition[]) || [],
     schemaLocked: resource.schemaLocked,

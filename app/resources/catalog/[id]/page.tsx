@@ -10,6 +10,8 @@ import ResourceAssignmentsList from '@/components/ResourceAssignmentsList';
 import ResourceItemForm from '@/components/ResourceItemForm';
 import ResourceAssignmentForm from '@/components/ResourceAssignmentForm';
 
+import { AllocationType } from '@/types/resource-structure';
+
 interface ResourceDetail {
   id: string;
   name: string;
@@ -24,6 +26,7 @@ interface ResourceDetail {
     department: string;
   };
   quantity?: number;
+  allocationType?: AllocationType;
   items: any[];
   assignments: any[];
   availability: {
@@ -90,7 +93,41 @@ export default function ResourceDetailPage() {
     if (!resource) return { canAssign: false, reason: 'Resource not loaded' };
     
     const normalizedType = normalizeType(getDisplayTypeName(resource));
+    const isSharedAllocation = resource.allocationType === 'SHARED';
     
+    // For SHARED allocation resources, check capacity instead of items
+    if (isSharedAllocation) {
+      const currentAssignments = resource.assignments?.length || 0;
+      const quantity = resource.quantity;
+      
+      // Unlimited capacity (-1)
+      if (quantity === -1) {
+        return { 
+          canAssign: true, 
+          reason: 'Shared resource (unlimited capacity)',
+          details: `${currentAssignments} current assignment${currentAssignments !== 1 ? 's' : ''}`
+        };
+      }
+      
+      // Check if capacity is available
+      const remainingCapacity = (quantity || 0) - currentAssignments;
+      if (remainingCapacity > 0) {
+        return { 
+          canAssign: true, 
+          reason: 'Shared resource with available capacity',
+          details: `${remainingCapacity} of ${quantity} seat${remainingCapacity !== 1 ? 's' : ''} available`,
+          availableCount: remainingCapacity
+        };
+      } else {
+        return { 
+          canAssign: false, 
+          reason: 'Capacity reached',
+          details: `All ${quantity} seats are currently assigned`
+        };
+      }
+    }
+    
+    // EXCLUSIVE allocation logic (original behavior)
     if (normalizedType === 'PHYSICAL') {
       if (resource.items.length === 0) {
         // No items exist - cannot assign
@@ -101,7 +138,7 @@ export default function ResourceDetailPage() {
         };
       } else {
         // Items exist - check if any are available
-        const availableItems = resource.items.filter(item => item.status === 'AVAILABLE');
+        const availableItems = resource.items.filter((item: any) => item.status === 'AVAILABLE');
         if (availableItems.length === 0) {
           return { 
             canAssign: false, 
@@ -126,7 +163,7 @@ export default function ResourceDetailPage() {
         };
       } else {
         // License items exist - check if any are available
-        const availableItems = resource.items.filter(item => item.status === 'AVAILABLE');
+        const availableItems = resource.items.filter((item: any) => item.status === 'AVAILABLE');
         if (availableItems.length === 0) {
           return { 
             canAssign: false, 
@@ -153,7 +190,7 @@ export default function ResourceDetailPage() {
           details: 'Please add items to this resource before assigning'
         };
       } else {
-        const availableItems = resource.items.filter(item => item.status === 'AVAILABLE');
+        const availableItems = resource.items.filter((item: any) => item.status === 'AVAILABLE');
         if (availableItems.length === 0) {
           return { 
             canAssign: false, 
@@ -372,7 +409,8 @@ export default function ResourceDetailPage() {
                   </>
                 )}
                 
-                {canManageResources && normalizeType(getDisplayTypeName(resource)) !== 'CLOUD' && (
+                {/* Add Item button - hidden for CLOUD resources and SHARED allocation resources */}
+                {canManageResources && normalizeType(getDisplayTypeName(resource)) !== 'CLOUD' && resource.allocationType !== 'SHARED' && (
                   <button
                     onClick={() => setShowItemForm(true)}
                     className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700"
@@ -394,8 +432,8 @@ export default function ResourceDetailPage() {
             </div>
           </div>
 
-          {/* Assignment Status Banner */}
-          {normalizeType(getDisplayTypeName(resource)) !== 'CLOUD' && (
+          {/* Assignment Status Banner - for EXCLUSIVE allocation resources (not CLOUD, not SHARED) */}
+          {normalizeType(getDisplayTypeName(resource)) !== 'CLOUD' && resource.allocationType !== 'SHARED' && (
             <div className="mb-6">
               {resource.items.length === 0 ? (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
@@ -453,8 +491,45 @@ export default function ResourceDetailPage() {
             </div>
           )}
 
+          {/* Shared Resource Capacity Banner */}
+          {resource.allocationType === 'SHARED' && (
+            <div className="mb-6">
+              <div className={`border rounded-lg p-4 ${
+                assignmentAvailability?.canAssign 
+                  ? 'bg-purple-50 border-purple-200' 
+                  : 'bg-red-50 border-red-200'
+              }`}>
+                <div className="flex items-start space-x-3">
+                  <svg className={`w-5 h-5 mt-0.5 ${
+                    assignmentAvailability?.canAssign ? 'text-purple-600' : 'text-red-600'
+                  }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                  <div>
+                    <h4 className={`text-sm font-medium ${
+                      assignmentAvailability?.canAssign ? 'text-purple-900' : 'text-red-900'
+                    }`}>
+                      Shared Resource {resource.quantity === -1 ? '(Unlimited Capacity)' : `(${resource.quantity} seats)`}
+                    </h4>
+                    <p className={`text-sm mt-1 ${
+                      assignmentAvailability?.canAssign ? 'text-purple-700' : 'text-red-700'
+                    }`}>
+                      {resource.quantity === -1 ? (
+                        `This shared resource has unlimited capacity. Currently ${resource.assignments?.length || 0} employee(s) assigned.`
+                      ) : assignmentAvailability?.canAssign ? (
+                        `${assignmentAvailability?.availableCount} of ${resource.quantity} seats available for assignment.`
+                      ) : (
+                        `All ${resource.quantity} seats are currently assigned. Remove existing assignments to free up capacity.`
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Cloud Resource Warning Banner */}
-          {normalizeType(getDisplayTypeName(resource)) === 'CLOUD' && resource.assignments.length > 0 && canManageResources && (
+          {normalizeType(getDisplayTypeName(resource)) === 'CLOUD' && resource.allocationType !== 'SHARED' && resource.assignments.length > 0 && canManageResources && (
             <div className="mb-6">
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                 <div className="flex items-start space-x-3">
@@ -531,7 +606,8 @@ export default function ResourceDetailPage() {
                   Overview
                 </button>
                 
-                {normalizeType(getDisplayTypeName(resource)) !== 'CLOUD' && (
+                {/* Items tab - hidden for CLOUD resources and SHARED allocation resources */}
+                {normalizeType(getDisplayTypeName(resource)) !== 'CLOUD' && resource.allocationType !== 'SHARED' && (
                   <button
                     onClick={() => setActiveTab('items')}
                     className={`py-4 px-1 border-b-2 font-medium text-sm ${
@@ -683,6 +759,9 @@ export default function ResourceDetailPage() {
         <ResourceAssignmentForm
           resourceId={resource.id}
           resourceType={resource.type}
+          allocationType={resource.allocationType}
+          quantity={resource.quantity}
+          currentAssignments={resource.assignments?.length || 0}
           availableItems={resource.items}
           onAssignmentCreated={handleCreateAssignment}
           onClose={() => setShowAssignmentForm(false)}

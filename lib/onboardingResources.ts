@@ -1,7 +1,6 @@
 // lib/onboardingResources.ts
 import { prisma } from './prisma';
 import { logTimelineActivity } from './timeline';
-import { getCompanyName } from './config/company';
 
 interface OnboardingResourceTemplate {
   name: string;
@@ -27,118 +26,34 @@ export async function assignOnboardingResources(
     errors: [] as string[]
   };
 
+  // DISABLED: Automatic resource allocation during onboarding
+  // Resources should be manually assigned by administrators through the assign-resources page
+  // This prevents unintended resource allocation and ensures proper allocation type validation
+  
   try {
-    // Get available resources from database instead of static templates
-    const availableResources = await prisma.resource.findMany({
-      where: {
-        status: 'ACTIVE'
-      },
-      select: {
-        id: true,
-        name: true,
-        type: true,
-        category: true,
-        description: true
-      }
-    });
-
-    if (availableResources.length === 0) {
-      results.errors.push('No resources available for onboarding. Please create resources first.');
-      return results;
-    }
-
-    // For now, assign basic resources that are commonly needed
-    // This can be made more sophisticated with role-based logic later
-    const basicResourceTypes = ['PHYSICAL', 'SOFTWARE']; // Prioritize physical and software resources
-    const resourcesToAssign = availableResources.filter(resource => 
-      basicResourceTypes.includes(resource.type)
-    ).slice(0, 3); // Limit to first 3 resources to avoid overwhelming new employees
-
-    if (resourcesToAssign.length === 0) {
-      results.errors.push('No suitable resources found for onboarding. Please ensure you have Physical or Software resources available.');
-      return results;
-    }
-
-    for (const resource of resourcesToAssign) {
-      try {
-        // Check if assignment already exists
-        const existingAssignment = await prisma.resourceAssignment.findFirst({
-          where: {
-            resourceId: resource.id,
-            employeeId: employeeId,
-            status: 'ACTIVE'
-          }
-        });
-
-        if (!existingAssignment) {
-          // Create new assignment
-          await prisma.resourceAssignment.create({
-            data: {
-              resourceId: resource.id,
-              employeeId: employeeId,
-              assignedBy: performedBy,
-              status: 'ACTIVE',
-              notes: `Automatically assigned during onboarding process`
-            }
-          });
-
-          results.assigned++;
-        } else {
-          console.log(`${resource.name} already assigned to ${employeeName}`);
-        }
-
-        // Log the assignment
-        await logTimelineActivity({
-          entityType: 'RESOURCE',
-          entityId: resource.id,
-          activityType: 'ASSIGNED',
-          title: `Onboarding resource assigned to ${employeeName}`,
-          description: `${resource.name} (${resource.type}) was automatically assigned to ${employeeName} during onboarding`,
-          metadata: {
-            resourceName: resource.name,
-            resourceType: resource.type,
-            resourceCategory: resource.category,
-            employeeName: employeeName,
-            employeeId: employeeId,
-            assignmentMethod: 'automatic_onboarding',
-            permissionLevel: 'read', // Default permission level
-            required: true
-          },
-          performedBy: performedBy,
-          resourceId: resource.id,
-          employeeId: employeeId
-        });
-
-      } catch (assignmentError) {
-        console.error(`Failed to assign ${resource.name} to ${employeeName}:`, assignmentError);
-        results.errors.push(`Failed to assign ${resource.name}: ${assignmentError}`);
-      }
-    }
-
-    // Log overall onboarding completion
+    // Log that onboarding was triggered but no automatic assignments were made
     await logTimelineActivity({
       entityType: 'EMPLOYEE',
       entityId: employeeId,
       activityType: 'ONBOARDING_COMPLETED',
-      title: `Onboarding resources assigned to ${employeeName}`,
-      description: `Automatic onboarding process completed for ${employeeName}. ${results.assigned} resources assigned from available inventory.`,
+      title: `Onboarding initiated for ${employeeName}`,
+      description: `Onboarding process initiated for ${employeeName}. Resources should be manually assigned through the resource assignment page.`,
       metadata: {
         employeeName: employeeName,
         role: role,
         department: department,
-        resourcesAssigned: results.assigned,
-        resourcesCreated: results.created,
-        errors: results.errors,
-        onboardingMethod: 'automatic_from_inventory',
+        resourcesAssigned: 0,
+        resourcesCreated: 0,
+        onboardingMethod: 'manual_assignment_required',
         completedAt: new Date().toISOString(),
-        availableResourcesCount: availableResources.length
+        note: 'Automatic resource allocation is disabled. Please assign resources manually.'
       },
       performedBy: performedBy,
       employeeId: employeeId
     });
 
   } catch (error) {
-    const errorMessage = `Failed to complete onboarding for ${employeeName}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    const errorMessage = `Failed to log onboarding for ${employeeName}: ${error instanceof Error ? error.message : 'Unknown error'}`;
     results.errors.push(errorMessage);
     console.error(errorMessage, error);
   }
@@ -147,7 +62,8 @@ export async function assignOnboardingResources(
 }
 
 export async function getOnboardingResourcesForEmployee(role: string, department: string): Promise<any[]> {
-  // Return empty array since we're now using dynamic resources from database
+  // Return empty array - automatic resource allocation is disabled
+  // Resources should be manually assigned through the assign-resources page
   return [];
 }
 
@@ -181,32 +97,22 @@ export async function checkEmployeeOnboardingStatus(employeeId: string): Promise
       }
     });
 
-    // Get total available resources to determine if onboarding is reasonable
-    const totalAvailableResources = await prisma.resource.count({
-      where: {
-        status: 'ACTIVE'
-      }
-    });
-
-    // Simple heuristic: if employee has at least 1 resource and there are resources available, consider onboarding complete
-    // This can be made more sophisticated later with role-based requirements
-    const hasBasicResources = assignedResources.length > 0;
-    const resourcesAvailable = totalAvailableResources > 0;
-
+    // Onboarding is considered complete regardless of resource count
+    // since automatic allocation is disabled and resources are manually assigned
     return {
-      completed: hasBasicResources && resourcesAvailable,
+      completed: true, // Always true since manual assignment is the process
       assignedResources: assignedResources.length,
-      expectedResources: Math.min(3, totalAvailableResources), // Expect up to 3 basic resources
-      missingResources: hasBasicResources ? [] : ['Basic resources needed for onboarding']
+      expectedResources: 0, // No automatic expectations
+      missingResources: [] // No automatic requirements
     };
 
   } catch (error) {
     console.error('Error checking onboarding status:', error);
     return {
-      completed: false,
+      completed: true, // Default to true to not block workflows
       assignedResources: 0,
       expectedResources: 0,
-      missingResources: ['Error checking onboarding status']
+      missingResources: []
     };
   }
 }

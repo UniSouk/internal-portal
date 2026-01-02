@@ -9,7 +9,8 @@ import { getCompanyName } from '@/lib/config/company';
 import { 
   PropertyDefinition, 
   ResourceTypeEntity, 
-  ResourceCategoryEntity 
+  ResourceCategoryEntity,
+  AllocationType
 } from '@/types/resource-structure';
 import { ChevronRight, ChevronLeft, Check, Info, AlertCircle, Loader2 } from 'lucide-react';
 
@@ -18,7 +19,7 @@ interface ResourceCreationWizardProps {
   onCancel: () => void;
 }
 
-type WizardStep = 'type' | 'category' | 'properties' | 'details' | 'review';
+type WizardStep = 'allocation' | 'type' | 'category' | 'properties' | 'details' | 'review';
 
 interface StepConfig {
   id: WizardStep;
@@ -26,13 +27,28 @@ interface StepConfig {
   description: string;
 }
 
-const WIZARD_STEPS: StepConfig[] = [
-  { id: 'type', title: 'Resource Type', description: 'Select the type of resource' },
-  { id: 'category', title: 'Category', description: 'Choose a category (optional)' },
-  { id: 'properties', title: 'Properties', description: 'Configure property schema' },
-  { id: 'details', title: 'Details', description: 'Enter resource information' },
-  { id: 'review', title: 'Review', description: 'Review and create' },
-];
+// Steps will be dynamically adjusted based on allocation type
+const getWizardSteps = (allocationType: AllocationType): StepConfig[] => {
+  const baseSteps: StepConfig[] = [
+    { id: 'allocation', title: 'Allocation', description: 'How will this resource be assigned?' },
+    { id: 'type', title: 'Resource Type', description: 'Select the type of resource' },
+  ];
+  
+  // Category is optional for SHARED, required for EXCLUSIVE
+  if (allocationType === 'EXCLUSIVE') {
+    baseSteps.push({ id: 'category', title: 'Category', description: 'Choose a category (required)' });
+  } else {
+    baseSteps.push({ id: 'category', title: 'Category', description: 'Choose a category (optional)' });
+  }
+  
+  baseSteps.push(
+    { id: 'properties', title: 'Properties', description: 'Configure property schema' },
+    { id: 'details', title: 'Details', description: 'Enter resource information' },
+    { id: 'review', title: 'Review', description: 'Review and create' }
+  );
+  
+  return baseSteps;
+};
 
 /**
  * ResourceCreationWizard Component
@@ -47,7 +63,7 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
   const { showNotification } = useNotification();
   
   // Wizard state
-  const [currentStep, setCurrentStep] = useState<WizardStep>('type');
+  const [currentStep, setCurrentStep] = useState<WizardStep>('allocation');
   const [loading, setLoading] = useState(false);
   
   // Resource types and categories from API
@@ -69,11 +85,15 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
     name: '',
     description: '',
     status: 'ACTIVE',
-    quantity: 1,
+    quantity: -1, // Default to unlimited for SHARED allocation
+    allocationType: 'EXCLUSIVE' as AllocationType,
     resourceTypeId: '',
     resourceCategoryId: '',
     custodianId: '',
   });
+
+  // Get dynamic wizard steps based on allocation type
+  const WIZARD_STEPS = getWizardSteps(formData.allocationType);
 
   // Get selected resource type
   const selectedType = resourceTypes.find(t => t.id === formData.resourceTypeId);
@@ -156,13 +176,50 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
 
   // Handle type selection
   const handleTypeSelect = (typeId: string) => {
+    const type = resourceTypes.find(t => t.id === typeId);
+    
     setFormData(prev => ({
       ...prev,
       resourceTypeId: typeId,
       resourceCategoryId: '', // Clear category when type changes
     }));
-    setSelectedProperties([]); // Clear properties when type changes
+    
+    // Auto-select mandatory properties for the selected type
+    if (type?.mandatoryProperties && type.mandatoryProperties.length > 0) {
+      // Fetch property details for mandatory properties
+      fetchMandatoryPropertyDetails(type.mandatoryProperties);
+    } else {
+      setSelectedProperties([]); // Clear properties when type changes
+    }
     setPropertyError(null);
+  };
+
+  // Fetch property details for mandatory properties
+  const fetchMandatoryPropertyDetails = async (mandatoryKeys: string[]) => {
+    try {
+      const response = await fetch('/api/property-catalog');
+      if (response.ok) {
+        const data = await response.json();
+        const allProperties = [
+          ...(data.systemProperties || []),
+          ...(data.customProperties || [])
+        ];
+        
+        // Find and select mandatory properties
+        const mandatoryProps = allProperties
+          .filter((p: any) => mandatoryKeys.includes(p.key))
+          .map((p: any) => ({
+            key: p.key,
+            label: p.label,
+            dataType: p.dataType,
+            description: p.description,
+          }));
+        
+        setSelectedProperties(mandatoryProps);
+      }
+    } catch (error) {
+      console.error('Error fetching mandatory property details:', error);
+    }
   };
 
   // Handle category selection
@@ -179,10 +236,16 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
   // Check if step is complete
   const isStepComplete = (step: WizardStep): boolean => {
     switch (step) {
+      case 'allocation':
+        return !!formData.allocationType;
       case 'type':
         return !!formData.resourceTypeId;
       case 'category':
-        return true; // Category is optional
+        // Category is required for EXCLUSIVE, optional for SHARED
+        if (formData.allocationType === 'EXCLUSIVE') {
+          return !!formData.resourceCategoryId;
+        }
+        return true; // Optional for SHARED
       case 'properties':
         return selectedProperties.length > 0;
       case 'details':
@@ -233,7 +296,8 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
         ...formData,
         type: mapTypeNameToLegacy(selectedType?.name || ''),
         selectedProperties: selectedProperties,
-        quantity: selectedType?.name === 'Cloud' ? formData.quantity : null,
+        quantity: formData.allocationType === 'SHARED' ? formData.quantity : null,
+        allocationType: formData.allocationType,
         owner: getCompanyName(),
       };
 
@@ -324,6 +388,177 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
     </div>
   );
 
+  // Render allocation type selection step (FIRST STEP)
+  const renderAllocationStep = () => (
+    <div className="space-y-6">
+      <div className="text-center mb-6">
+        <h3 className="text-lg font-semibold text-gray-900">How will this resource be assigned?</h3>
+        <p className="text-sm text-gray-500 mt-1">
+          This determines how employees can use this resource
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* EXCLUSIVE Option */}
+        <button
+          type="button"
+          onClick={() => setFormData(prev => ({ 
+            ...prev, 
+            allocationType: 'EXCLUSIVE', 
+            quantity: -1,
+            resourceCategoryId: '' // Reset category when switching
+          }))}
+          className={`
+            p-6 rounded-xl border-2 text-left transition-all duration-200
+            hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-indigo-500
+            ${formData.allocationType === 'EXCLUSIVE'
+              ? 'border-indigo-500 bg-indigo-50 shadow-lg'
+              : 'border-gray-200 hover:border-gray-300'
+            }
+          `}
+        >
+          <div className="flex items-center mb-4">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mr-4 ${
+              formData.allocationType === 'EXCLUSIVE' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'
+            }`}>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            </div>
+            <div>
+              <h4 className={`text-lg font-semibold ${formData.allocationType === 'EXCLUSIVE' ? 'text-indigo-900' : 'text-gray-900'}`}>
+                Exclusive
+              </h4>
+              <span className="text-xs font-medium text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded">
+                One-to-One
+              </span>
+            </div>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">
+            Each employee gets their own dedicated item. Perfect for physical assets that need individual tracking.
+          </p>
+          <div className="space-y-2">
+            <div className="flex items-center text-sm text-gray-500">
+              <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Individual item tracking
+            </div>
+            <div className="flex items-center text-sm text-gray-500">
+              <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Serial numbers & asset tags
+            </div>
+            <div className="flex items-center text-sm text-gray-500">
+              <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Category selection required
+            </div>
+          </div>
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <p className="text-xs text-gray-500">
+              <strong>Examples:</strong> Laptops, phones, monitors, keyboards
+            </p>
+          </div>
+        </button>
+
+        {/* SHARED Option */}
+        <button
+          type="button"
+          onClick={() => setFormData(prev => ({ 
+            ...prev, 
+            allocationType: 'SHARED', 
+            quantity: -1,
+            resourceCategoryId: '' // Reset category when switching
+          }))}
+          className={`
+            p-6 rounded-xl border-2 text-left transition-all duration-200
+            hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-purple-500
+            ${formData.allocationType === 'SHARED'
+              ? 'border-purple-500 bg-purple-50 shadow-lg'
+              : 'border-gray-200 hover:border-gray-300'
+            }
+          `}
+        >
+          <div className="flex items-center mb-4">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mr-4 ${
+              formData.allocationType === 'SHARED' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-500'
+            }`}>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+            </div>
+            <div>
+              <h4 className={`text-lg font-semibold ${formData.allocationType === 'SHARED' ? 'text-purple-900' : 'text-gray-900'}`}>
+                Shared
+              </h4>
+              <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded">
+                One-to-Many
+              </span>
+            </div>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">
+            Multiple employees can share the same resource. Ideal for software licenses and cloud services.
+          </p>
+          <div className="space-y-2">
+            <div className="flex items-center text-sm text-gray-500">
+              <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Seat/license management
+            </div>
+            <div className="flex items-center text-sm text-gray-500">
+              <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Unlimited or capped capacity
+            </div>
+            <div className="flex items-center text-sm text-gray-500">
+              <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Category selection optional
+            </div>
+          </div>
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <p className="text-xs text-gray-500">
+              <strong>Examples:</strong> Figma, Slack, AWS accounts, Zoom
+            </p>
+          </div>
+        </button>
+      </div>
+
+      {/* Guidance message */}
+      <div className={`border rounded-lg p-4 mt-6 ${
+        formData.allocationType === 'EXCLUSIVE' 
+          ? 'bg-indigo-50 border-indigo-200' 
+          : 'bg-purple-50 border-purple-200'
+      }`}>
+        <div className="flex items-start">
+          <Info className={`w-5 h-5 mt-0.5 mr-3 flex-shrink-0 ${
+            formData.allocationType === 'EXCLUSIVE' ? 'text-indigo-500' : 'text-purple-500'
+          }`} />
+          <div className={`text-sm ${
+            formData.allocationType === 'EXCLUSIVE' ? 'text-indigo-800' : 'text-purple-800'
+          }`}>
+            <p className="font-medium">
+              {formData.allocationType === 'EXCLUSIVE' 
+                ? 'Exclusive allocation selected' 
+                : 'Shared allocation selected'}
+            </p>
+            <p className="mt-1">
+              {formData.allocationType === 'EXCLUSIVE' 
+                ? 'You\'ll need to add individual items (with serial numbers, etc.) that can be assigned to employees one at a time. Category selection will be required.'
+                : 'Employees can be assigned directly to this resource without needing individual items. You can set a capacity limit or allow unlimited assignments. Category selection is optional.'}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   // Render type selection step
   const renderTypeStep = () => (
     <div className="space-y-6">
@@ -391,67 +626,125 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
   );
 
   // Render category selection step
-  const renderCategoryStep = () => (
-    <div className="space-y-6">
-      <div className="text-center mb-6">
-        <h3 className="text-lg font-semibold text-gray-900">Select a category</h3>
-        <p className="text-sm text-gray-500 mt-1">
-          Categories help organize resources within the {selectedType?.name} type
-        </p>
-      </div>
-
-      {loadingCategories ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-          <span className="ml-3 text-gray-600">Loading categories...</span>
-        </div>
-      ) : filteredCategories.length === 0 ? (
-        <div className="text-center py-12 bg-gray-50 rounded-xl border border-gray-200">
-          <div className="text-gray-400 mb-4">
-            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-          </div>
-          <p className="text-gray-600 font-medium">No categories available</p>
+  const renderCategoryStep = () => {
+    const isRequired = formData.allocationType === 'EXCLUSIVE';
+    
+    return (
+      <div className="space-y-6">
+        <div className="text-center mb-6">
+          <h3 className="text-lg font-semibold text-gray-900">
+            Select a category
+            {isRequired && <span className="text-red-500 ml-1">*</span>}
+          </h3>
           <p className="text-sm text-gray-500 mt-1">
-            You can skip this step or create categories in the Resource Type Manager
+            {isRequired 
+              ? `Category is required for exclusive resources within the ${selectedType?.name} type`
+              : `Categories help organize resources within the ${selectedType?.name} type (optional for shared resources)`
+            }
           </p>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* No category option */}
 
-          {filteredCategories.map((category) => (
-            <button
-              key={category.id}
-              type="button"
-              onClick={() => handleCategorySelect(category.id)}
-              className={`
-                p-4 rounded-xl border-2 text-left transition-all duration-200
-                hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-500
-                ${formData.resourceCategoryId === category.id
-                  ? 'border-indigo-500 bg-indigo-50 shadow-md'
-                  : 'border-gray-200 hover:border-gray-300'
-                }
-              `}
-            >
-              <h4 className={`font-semibold ${formData.resourceCategoryId === category.id ? 'text-indigo-900' : 'text-gray-900'}`}>
-                {category.name}
-              </h4>
-              {category.description && (
-                <p className="text-sm text-gray-500 mt-1">{category.description}</p>
-              )}
-              {category.isSystem && (
-                <span className="inline-block mt-2 px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded">
-                  System
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+        {loadingCategories ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+            <span className="ml-3 text-gray-600">Loading categories...</span>
+          </div>
+        ) : filteredCategories.length === 0 ? (
+          <div className="text-center py-12 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="text-gray-400 mb-4">
+              <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+            </div>
+            <p className="text-gray-600 font-medium">No categories available</p>
+            <p className="text-sm text-gray-500 mt-1">
+              {isRequired 
+                ? 'Please create categories in the Resource Type Manager first, or switch to Shared allocation'
+                : 'You can skip this step or create categories in the Resource Type Manager'
+              }
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Skip category option - only for SHARED allocation */}
+            {!isRequired && (
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, resourceCategoryId: '' }))}
+                className={`
+                  p-4 rounded-xl border-2 border-dashed text-left transition-all duration-200
+                  hover:shadow-md focus:outline-none focus:ring-2 focus:ring-gray-400
+                  ${!formData.resourceCategoryId
+                    ? 'border-gray-400 bg-gray-50 shadow-md'
+                    : 'border-gray-300 hover:border-gray-400'
+                  }
+                `}
+              >
+                <div className="flex items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center mr-3 ${
+                    !formData.resourceCategoryId ? 'bg-gray-600 text-white' : 'bg-gray-200 text-gray-500'
+                  }`}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 12H6" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className={`font-semibold ${!formData.resourceCategoryId ? 'text-gray-900' : 'text-gray-700'}`}>
+                      No Category
+                    </h4>
+                    <p className="text-sm text-gray-500">Skip category selection</p>
+                  </div>
+                </div>
+              </button>
+            )}
+
+            {filteredCategories.map((category) => (
+              <button
+                key={category.id}
+                type="button"
+                onClick={() => handleCategorySelect(category.id)}
+                className={`
+                  p-4 rounded-xl border-2 text-left transition-all duration-200
+                  hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-500
+                  ${formData.resourceCategoryId === category.id
+                    ? 'border-indigo-500 bg-indigo-50 shadow-md'
+                    : 'border-gray-200 hover:border-gray-300'
+                  }
+                `}
+              >
+                <h4 className={`font-semibold ${formData.resourceCategoryId === category.id ? 'text-indigo-900' : 'text-gray-900'}`}>
+                  {category.name}
+                </h4>
+                {category.description && (
+                  <p className="text-sm text-gray-500 mt-1">{category.description}</p>
+                )}
+                {category.isSystem && (
+                  <span className="inline-block mt-2 px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded">
+                    System
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Warning for EXCLUSIVE without category */}
+        {isRequired && !formData.resourceCategoryId && filteredCategories.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+            <div className="flex items-start">
+              <AlertCircle className="w-5 h-5 text-amber-500 mt-0.5 mr-3 flex-shrink-0" />
+              <div className="text-sm text-amber-800">
+                <p className="font-medium">Category Required</p>
+                <p className="mt-1">
+                  For exclusive allocation resources, you must select a category to help organize and track individual items.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Render properties step
   const renderPropertiesStep = () => (
@@ -468,6 +761,7 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
         onPropertiesChange={setSelectedProperties}
         resourceTypeId={formData.resourceTypeId}
         resourceTypeName={selectedType?.name}
+        mandatoryProperties={selectedType?.mandatoryProperties || []}
         error={propertyError || undefined}
       />
 
@@ -524,6 +818,47 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
           />
         </div>
 
+        {/* Quantity field for SHARED allocation */}
+        {formData.allocationType === 'SHARED' && (
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Quantity / Seats
+            </label>
+            <div className="flex items-center space-x-4">
+              <div className="flex-1">
+                <input
+                  type="number"
+                  value={formData.quantity === -1 ? '' : formData.quantity}
+                  onChange={(e) => {
+                    const val = e.target.value === '' ? -1 : parseInt(e.target.value);
+                    setFormData(prev => ({ ...prev, quantity: val }));
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  placeholder="Leave empty for unlimited"
+                  min="1"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, quantity: -1 }))}
+                className={`px-4 py-3 rounded-lg border-2 transition-colors ${
+                  formData.quantity === -1
+                    ? 'border-purple-500 bg-purple-50 text-purple-700'
+                    : 'border-gray-300 text-gray-600 hover:border-gray-400'
+                }`}
+              >
+                ∞ Unlimited
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {formData.quantity === -1 
+                ? 'Unlimited: No restriction on number of assignments'
+                : `Limited to ${formData.quantity} concurrent assignments`
+              }
+            </p>
+          </div>
+        )}
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Custodian <span className="text-red-500">*</span>
@@ -560,25 +895,46 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
             placeholder="Select status"
           />
         </div>
+      </div>
 
-        {selectedType?.name === 'Cloud' && (
+      {/* Allocation type summary */}
+      <div className={`border rounded-lg p-4 ${
+        formData.allocationType === 'EXCLUSIVE' 
+          ? 'bg-indigo-50 border-indigo-200' 
+          : 'bg-purple-50 border-purple-200'
+      }`}>
+        <div className="flex items-center">
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
+            formData.allocationType === 'EXCLUSIVE' ? 'bg-indigo-600 text-white' : 'bg-purple-600 text-white'
+          }`}>
+            {formData.allocationType === 'EXCLUSIVE' ? (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+            )}
+          </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Quantity <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="number"
-              value={formData.quantity}
-              onChange={(e) => setFormData(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              placeholder="Number of licenses/instances"
-              min="1"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Use 999999 for unlimited
+            <h4 className={`text-sm font-medium ${
+              formData.allocationType === 'EXCLUSIVE' ? 'text-indigo-900' : 'text-purple-900'
+            }`}>
+              {formData.allocationType === 'EXCLUSIVE' ? 'Exclusive Allocation' : 'Shared Allocation'}
+            </h4>
+            <p className={`text-xs ${
+              formData.allocationType === 'EXCLUSIVE' ? 'text-indigo-600' : 'text-purple-600'
+            }`}>
+              {formData.allocationType === 'EXCLUSIVE' 
+                ? 'Each employee gets their own item'
+                : formData.quantity === -1 
+                  ? 'Multiple employees can share • Unlimited capacity'
+                  : `Multiple employees can share • ${formData.quantity} seats`
+              }
             </p>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Company ownership info */}
@@ -652,12 +1008,36 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
             </div>
           </div>
 
-          {selectedType?.name === 'Cloud' && (
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Quantity</label>
-              <p className="text-gray-900">{formData.quantity}</p>
+              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Allocation Type</label>
+              <p className="text-gray-900 flex items-center">
+                {formData.allocationType === 'EXCLUSIVE' ? (
+                  <>
+                    <svg className="w-4 h-4 mr-1 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    Exclusive (One per employee)
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 mr-1 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    Shared (Multiple employees)
+                  </>
+                )}
+              </p>
             </div>
-          )}
+            {formData.allocationType === 'SHARED' && (
+              <div>
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Quantity / Seats</label>
+                <p className="text-gray-900">
+                  {formData.quantity === -1 ? '∞ Unlimited' : formData.quantity}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Property Schema */}
@@ -699,6 +1079,8 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
   // Render current step content
   const renderStepContent = () => {
     switch (currentStep) {
+      case 'allocation':
+        return renderAllocationStep();
       case 'type':
         return renderTypeStep();
       case 'category':
@@ -715,7 +1097,7 @@ export default function ResourceCreationWizard({ onSubmit, onCancel }: ResourceC
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-40">
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">

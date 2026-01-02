@@ -783,6 +783,7 @@ function mapPrismaToEnhancedResourceItem(item: any): EnhancedResourceItem {
       owner: item.resource.owner ?? 'Unisouk',
       custodianId: item.resource.custodianId ?? '',
       status: item.resource.status ?? 'ACTIVE',
+      allocationType: item.resource.allocationType ?? 'EXCLUSIVE',
       propertySchema: (item.resource.propertySchema as any[]) || [],
       schemaLocked: item.resource.schemaLocked ?? false,
       createdAt: item.resource.createdAt ?? new Date(),

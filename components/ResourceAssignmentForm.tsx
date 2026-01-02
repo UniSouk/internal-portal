@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import ElegantSelect from './ElegantSelect';
+import { AllocationType } from '@/types/resource-structure';
 
 interface Employee {
   id: string;
@@ -24,6 +25,9 @@ interface ResourceItem {
 interface ResourceAssignmentFormProps {
   resourceId: string;
   resourceType: 'PHYSICAL' | 'SOFTWARE' | 'CLOUD';
+  allocationType?: AllocationType;
+  quantity?: number;
+  currentAssignments?: number;
   availableItems?: ResourceItem[];
   onAssignmentCreated?: () => void;
   onClose?: () => void;
@@ -32,6 +36,9 @@ interface ResourceAssignmentFormProps {
 export default function ResourceAssignmentForm({ 
   resourceId, 
   resourceType,
+  allocationType = 'EXCLUSIVE',
+  quantity,
+  currentAssignments = 0,
   availableItems = [],
   onAssignmentCreated, 
   onClose 
@@ -45,12 +52,22 @@ export default function ResourceAssignmentForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Determine if this is a SHARED allocation resource
+  const isSharedAllocation = allocationType === 'SHARED';
+  
+  // For SHARED resources, calculate capacity
+  const isUnlimitedCapacity = isSharedAllocation && quantity === -1;
+  const remainingCapacity = isSharedAllocation && quantity !== undefined && quantity > 0 
+    ? quantity - currentAssignments 
+    : (isUnlimitedCapacity ? Infinity : 0);
+  const hasCapacity = isSharedAllocation ? (isUnlimitedCapacity || remainingCapacity > 0) : true;
+
   // Determine assignment logic for physical and software resources
   const totalItems = availableItems.length;
-  const hasItems = (resourceType === 'PHYSICAL' || resourceType === 'SOFTWARE') && totalItems > 0;
-  const canAssignDirectly = false; // Resources without items cannot be assigned directly anymore
+  // For EXCLUSIVE allocation, we need items; for SHARED, we don't need items
+  const hasItems = !isSharedAllocation && (resourceType === 'PHYSICAL' || resourceType === 'SOFTWARE') && totalItems > 0;
   const availableResourceItems = availableItems.filter(item => item.status === 'AVAILABLE');
-  const noItemsExist = totalItems === 0;
+  const noItemsExist = !isSharedAllocation && totalItems === 0;
 
   useEffect(() => {
     fetchEmployees();
@@ -86,7 +103,8 @@ export default function ResourceAssignmentForm({
         body: JSON.stringify({
           resourceId,
           employeeId: formData.employeeId,
-          ...(hasItems && formData.itemId && { itemId: formData.itemId }),
+          // For EXCLUSIVE allocation with items, include itemId; for SHARED, no itemId needed
+          ...(!isSharedAllocation && hasItems && formData.itemId && { itemId: formData.itemId }),
           notes: formData.notes
         })
       });
@@ -120,8 +138,12 @@ export default function ResourceAssignmentForm({
     description: `Status: ${item.status}${resourceType === 'SOFTWARE' && item.softwareVersion ? ` • Version: ${item.softwareVersion}` : ''}`
   }));
 
-  // Form validation - cannot assign if no items exist
-  const isFormValid = !noItemsExist && formData.employeeId && (resourceType === 'CLOUD' || (hasItems && formData.itemId && availableResourceItems.length > 0));
+  // Form validation - depends on allocation type
+  // For SHARED: just need employee selected and capacity available
+  // For EXCLUSIVE: need employee and item selected (if items exist)
+  const isFormValid = isSharedAllocation 
+    ? (formData.employeeId && hasCapacity)
+    : (!noItemsExist && formData.employeeId && (resourceType === 'CLOUD' || (hasItems && formData.itemId && availableResourceItems.length > 0)));
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
@@ -155,7 +177,59 @@ export default function ResourceAssignmentForm({
           )}
 
           {/* Assignment Type Info */}
-          {(resourceType === 'PHYSICAL' || resourceType === 'SOFTWARE') && (
+          {isSharedAllocation ? (
+            /* SHARED Allocation Info */
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
+              <div className="flex items-start space-x-2">
+                <svg className="w-5 h-5 text-purple-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                <div className="text-sm">
+                  <p className="font-medium text-purple-900">Shared Resource Assignment</p>
+                  <p className="text-purple-700">
+                    This is a shared resource that can be assigned to multiple employees.
+                  </p>
+                  {/* Capacity Information */}
+                  <div className="mt-2 p-2 bg-purple-100 rounded">
+                    <div className="flex items-center justify-between">
+                      <span className="text-purple-800 font-medium">Capacity:</span>
+                      <span className="text-purple-900">
+                        {isUnlimitedCapacity ? (
+                          <span className="flex items-center">
+                            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14" />
+                            </svg>
+                            Unlimited
+                          </span>
+                        ) : (
+                          `${currentAssignments} / ${quantity} seats used`
+                        )}
+                      </span>
+                    </div>
+                    {!isUnlimitedCapacity && (
+                      <div className="mt-1">
+                        <div className="w-full bg-purple-200 rounded-full h-2">
+                          <div 
+                            className={`h-2 rounded-full ${remainingCapacity > 0 ? 'bg-purple-600' : 'bg-red-500'}`}
+                            style={{ width: `${Math.min((currentAssignments / (quantity || 1)) * 100, 100)}%` }}
+                          ></div>
+                        </div>
+                        <p className="text-xs text-purple-700 mt-1">
+                          {remainingCapacity > 0 
+                            ? `${remainingCapacity} seat${remainingCapacity !== 1 ? 's' : ''} remaining`
+                            : 'No seats available - capacity reached'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  {!hasCapacity && (
+                    <p className="text-red-700 mt-2">⚠️ This resource has reached its maximum capacity. No more assignments can be made.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (resourceType === 'PHYSICAL' || resourceType === 'SOFTWARE') && (
+            /* EXCLUSIVE Allocation Info */
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
               <div className="flex items-start space-x-2">
                 <svg className="w-5 h-5 text-blue-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -200,7 +274,8 @@ export default function ResourceAssignmentForm({
             />
           </div>
 
-          {hasItems && (
+          {/* Item Selection - Only for EXCLUSIVE allocation with items */}
+          {!isSharedAllocation && hasItems && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Select {resourceType === 'SOFTWARE' ? 'License' : 'Hardware Item'} <span className="text-red-500">*</span>
@@ -265,12 +340,18 @@ export default function ResourceAssignmentForm({
               type="submit"
               disabled={loading || !isFormValid}
               className="px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              title={!isFormValid ? `Please select an employee and available ${resourceType === 'SOFTWARE' ? 'license' : 'hardware item'}` : ''}
+              title={!isFormValid ? (
+                isSharedAllocation 
+                  ? (!hasCapacity ? 'Resource has reached maximum capacity' : 'Please select an employee')
+                  : `Please select an employee and available ${resourceType === 'SOFTWARE' ? 'license' : 'hardware item'}`
+              ) : ''}
             >
               {loading ? 'Assigning...' : (
-                hasItems && availableResourceItems.length === 0 
-                  ? `No ${resourceType === 'SOFTWARE' ? 'Licenses' : 'Items'} Available` 
-                  : 'Assign Resource'
+                isSharedAllocation 
+                  ? (!hasCapacity ? 'Capacity Reached' : 'Assign Resource')
+                  : (hasItems && availableResourceItems.length === 0 
+                      ? `No ${resourceType === 'SOFTWARE' ? 'Licenses' : 'Items'} Available` 
+                      : 'Assign Resource')
               )}
             </button>
           </div>

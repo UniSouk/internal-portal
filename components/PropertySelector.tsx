@@ -108,6 +108,35 @@ export default function PropertySelector({
     }
   }, [resourceTypeId, resourceTypeName]);
 
+  // Auto-select mandatory properties when they change or when catalog loads
+  useEffect(() => {
+    if (mandatoryProperties.length > 0 && (systemProperties.length > 0 || customProperties.length > 0)) {
+      const allProperties = [...systemProperties, ...customProperties];
+      
+      // Find mandatory properties that are not yet selected
+      const missingMandatory = mandatoryProperties.filter(
+        key => !selectedProperties.some(p => p.key === key)
+      );
+      
+      if (missingMandatory.length > 0) {
+        // Get property details for missing mandatory properties
+        const mandatoryToAdd = allProperties
+          .filter(p => missingMandatory.includes(p.key))
+          .map(p => ({
+            key: p.key,
+            label: p.label,
+            dataType: p.dataType,
+            description: p.description,
+            defaultValue: p.defaultValue as PropertyDefinition['defaultValue'],
+          }));
+        
+        if (mandatoryToAdd.length > 0) {
+          onPropertiesChange([...selectedProperties, ...mandatoryToAdd]);
+        }
+      }
+    }
+  }, [mandatoryProperties, systemProperties, customProperties]);
+
   // Check if a property is selected
   const isPropertySelected = (key: string): boolean => {
     return selectedProperties.some(p => p.key === key);

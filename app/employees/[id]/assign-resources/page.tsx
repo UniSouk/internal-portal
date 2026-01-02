@@ -5,6 +5,11 @@ import { useRouter, useParams } from 'next/navigation';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useNotification } from '@/components/Notification';
 
+interface ResourceItem {
+  id: string;
+  status: string;
+}
+
 interface Resource {
   id: string;
   name: string;
@@ -15,6 +20,11 @@ interface Resource {
   status: string;
   assignedToId?: string;
   assignedToIds?: string[];
+  // Allocation type fields
+  allocationType?: 'EXCLUSIVE' | 'SHARED';
+  quantity?: number;
+  items?: ResourceItem[];
+  assignedCount?: number;
 }
 
 interface Employee {
@@ -42,15 +52,6 @@ export default function AssignResourcesPage() {
     software: [],
     cloud: []
   });
-  const [autoSelectedResources, setAutoSelectedResources] = useState<{
-    physical: string[];
-    software: string[];
-    cloud: string[];
-  }>({
-    physical: [],
-    software: [],
-    cloud: []
-  });
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(false);
 
@@ -59,176 +60,6 @@ export default function AssignResourcesPage() {
       fetchEmployeeAndResources();
     }
   }, [employeeId]);
-
-  // Auto-select resources based on employee department
-  useEffect(() => {
-    if (employee && resources.length > 0) {
-      autoSelectResourcesByDepartment();
-    }
-  }, [employee, resources]);
-
-  const autoSelectResourcesByDepartment = () => {
-    if (!employee) return;
-
-    const autoSelectedIds = getAutoSelectionsByDepartment(employee.department, employee.role);
-    
-    // Organize auto-selected resources by type
-    const physicalSelections: string[] = [];
-    const softwareSelections: string[] = [];
-    const cloudSelections: string[] = [];
-
-    autoSelectedIds.forEach(resourceId => {
-      const resource = resources.find(r => r.id === resourceId);
-      if (resource) {
-        if (resource.type === 'PHYSICAL') {
-          physicalSelections.push(resource.id);
-        } else if (resource.type === 'SOFTWARE') {
-          softwareSelections.push(resource.id);
-        } else if (resource.type === 'CLOUD') {
-          cloudSelections.push(resource.id);
-        }
-      }
-    });
-
-    // Update selected resources with auto-selections
-    setSelectedResources({
-      physical: physicalSelections,
-      software: softwareSelections,
-      cloud: cloudSelections
-    });
-
-    // Track which resources were auto-selected
-    setAutoSelectedResources({
-      physical: physicalSelections,
-      software: softwareSelections,
-      cloud: cloudSelections
-    });
-
-    // Show notification about auto-selection
-    if (physicalSelections.length > 0 || softwareSelections.length > 0 || cloudSelections.length > 0) {
-      const totalSelected = physicalSelections.length + softwareSelections.length + cloudSelections.length;
-      showNotification(
-        'info', 
-        'Resources Auto-Selected', 
-        `${totalSelected} resources have been automatically selected based on ${employee.name}'s department (${employee.department}) and role (${employee.role.replace(/_/g, ' ')}). You can modify the selection as needed.`
-      );
-    } else {
-      // No resources were auto-selected, show helpful message
-      showNotification(
-        'info', 
-        'No Auto-Selection Available', 
-        `No resources were automatically selected for ${employee.name}. Please manually select appropriate resources from the available options below.`
-      );
-    }
-  };
-
-  const getAutoSelectionsByDepartment = (department: string, role: string) => {
-    // Dynamic auto-selection based on available resources in database
-    // This function now works with actual database resources instead of hard-coded patterns
-    
-    const autoSelections: string[] = [];
-    
-    // Get resources by category preferences for different departments
-    const departmentPreferences = getDepartmentResourcePreferences(department, role);
-    
-    // Find matching resources from available resources
-    departmentPreferences.forEach(preference => {
-      const matchingResources = resources.filter(resource => 
-        resource.type === preference.type && 
-        preference.categories.includes(resource.category) &&
-        resource.status === 'AVAILABLE' // Only auto-select available resources
-      );
-      
-      // Auto-select up to the preferred quantity for each category
-      matchingResources.slice(0, preference.maxQuantity || 1).forEach(resource => {
-        autoSelections.push(resource.id);
-      });
-    });
-    
-    return autoSelections;
-  };
-
-  const getDepartmentResourcePreferences = (department: string, role: string) => {
-    const preferences: Array<{
-      type: 'PHYSICAL' | 'SOFTWARE' | 'CLOUD';
-      categories: string[];
-      maxQuantity?: number;
-    }> = [];
-
-    // Common resources for all employees
-    preferences.push(
-      { type: 'PHYSICAL', categories: ['Peripherals', 'Other Hardware'], maxQuantity: 2 },
-      { type: 'SOFTWARE', categories: ['Communication', 'Productivity Suite'], maxQuantity: 2 },
-      { type: 'CLOUD', categories: ['Productivity Cloud', 'Communication'], maxQuantity: 2 }
-    );
-
-    // Department-specific preferences based on available categories
-    switch (department.toLowerCase()) {
-      case 'engineering':
-      case 'technology':
-        preferences.push(
-          { type: 'PHYSICAL', categories: ['Laptop', 'Desktop', 'Monitor'], maxQuantity: 1 },
-          { type: 'PHYSICAL', categories: ['Peripherals'], maxQuantity: 2 },
-          { type: 'SOFTWARE', categories: ['Development IDE', 'Database'], maxQuantity: 2 },
-          { type: 'CLOUD', categories: ['Development Platform', 'Code Repository'], maxQuantity: 2 }
-        );
-        
-        // Role-specific additions for engineering
-        if (role.includes('FRONTEND') || role.includes('DESIGNER')) {
-          preferences.push({ type: 'SOFTWARE', categories: ['Design Tool'], maxQuantity: 1 });
-        }
-        if (role.includes('CREATIVE') || role.includes('DESIGNER')) {
-          preferences.push({ type: 'SOFTWARE', categories: ['Design Software'], maxQuantity: 1 });
-        }
-        break;
-
-      case 'design':
-      case 'creative':
-        preferences.push(
-          { type: 'PHYSICAL', categories: ['Laptop', 'Desktop', 'Monitor'], maxQuantity: 1 },
-          { type: 'SOFTWARE', categories: ['Design Software', 'Design Tool'], maxQuantity: 2 }
-        );
-        break;
-
-      case 'sales':
-      case 'marketing':
-        preferences.push(
-          { type: 'PHYSICAL', categories: ['Laptop', 'Mobile Device'], maxQuantity: 1 },
-          { type: 'SOFTWARE', categories: ['Productivity Suite'], maxQuantity: 1 },
-          { type: 'CLOUD', categories: ['CRM'], maxQuantity: 1 }
-        );
-        break;
-
-      case 'human resources':
-      case 'hr':
-        preferences.push(
-          { type: 'PHYSICAL', categories: ['Laptop', 'Desktop'], maxQuantity: 1 },
-          { type: 'SOFTWARE', categories: ['Productivity Suite'], maxQuantity: 1 }
-        );
-        break;
-
-      case 'finance':
-      case 'accounting':
-        preferences.push(
-          { type: 'PHYSICAL', categories: ['Laptop', 'Desktop'], maxQuantity: 1 },
-          { type: 'SOFTWARE', categories: ['Productivity Suite', 'Database'], maxQuantity: 2 }
-        );
-        break;
-
-      default:
-        // General office worker
-        preferences.push(
-          { type: 'PHYSICAL', categories: ['Laptop', 'Desktop'], maxQuantity: 1 },
-          { type: 'SOFTWARE', categories: ['Productivity Suite'], maxQuantity: 1 }
-        );
-        break;
-    }
-
-    // Office furniture for all employees
-    preferences.push({ type: 'PHYSICAL', categories: ['Furniture'], maxQuantity: 1 });
-
-    return preferences;
-  };
 
   const fetchEmployeeAndResources = async () => {
     try {
@@ -363,6 +194,79 @@ export default function AssignResourcesPage() {
     return resources.filter(resource => resource.type === type);
   };
 
+  // Check if a resource can be allocated based on allocation type
+  const canAllocateResource = (resource: Resource): { canAllocate: boolean; reason?: string } => {
+    const allocationType = resource.allocationType || 'EXCLUSIVE';
+    
+    if (allocationType === 'EXCLUSIVE') {
+      // For EXCLUSIVE allocation, check if resource has available items
+      const items = resource.items || [];
+      const availableItems = items.filter(item => item.status === 'AVAILABLE');
+      
+      if (items.length === 0) {
+        return { 
+          canAllocate: false, 
+          reason: 'No items available - add items to this resource first' 
+        };
+      }
+      
+      if (availableItems.length === 0) {
+        return { 
+          canAllocate: false, 
+          reason: 'All items are currently assigned or unavailable' 
+        };
+      }
+      
+      return { canAllocate: true };
+    } else {
+      // For SHARED allocation, check quantity/capacity
+      const quantity = resource.quantity ?? 0;
+      const currentAssignments = resource.assignedCount ?? 0;
+      
+      // Unlimited capacity (-1)
+      if (quantity === -1) {
+        return { canAllocate: true };
+      }
+      
+      // Check if there's remaining capacity
+      if (quantity > 0 && currentAssignments < quantity) {
+        return { canAllocate: true };
+      }
+      
+      if (quantity === 0) {
+        return { 
+          canAllocate: false, 
+          reason: 'Resource has no capacity configured' 
+        };
+      }
+      
+      return { 
+        canAllocate: false, 
+        reason: `Capacity reached (${currentAssignments}/${quantity} seats used)` 
+      };
+    }
+  };
+
+  // Get allocation info for display
+  const getAllocationInfo = (resource: Resource): string => {
+    const allocationType = resource.allocationType || 'EXCLUSIVE';
+    
+    if (allocationType === 'EXCLUSIVE') {
+      const items = resource.items || [];
+      const availableItems = items.filter(item => item.status === 'AVAILABLE');
+      return `${availableItems.length}/${items.length} items available`;
+    } else {
+      const quantity = resource.quantity ?? 0;
+      const currentAssignments = resource.assignedCount ?? 0;
+      
+      if (quantity === -1) {
+        return `Unlimited capacity (${currentAssignments} assigned)`;
+      }
+      
+      return `${currentAssignments}/${quantity} seats used`;
+    }
+  };
+
   const getSelectedCount = (type: 'physical' | 'software' | 'cloud') => {
     return selectedResources[type].length;
   };
@@ -436,28 +340,6 @@ export default function AssignResourcesPage() {
             </div>
           </div>
 
-          {/* Auto-Selection Info Banner */}
-          {employee && (autoSelectedResources.physical.length > 0 || autoSelectedResources.software.length > 0 || autoSelectedResources.cloud.length > 0) && (
-            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-6">
-              <div className="flex items-start">
-                <svg className="h-5 w-5 text-indigo-400 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                </svg>
-                <div className="ml-3">
-                  <h4 className="text-sm font-medium text-indigo-800">Smart Resource Selection</h4>
-                  <div className="mt-1 text-sm text-indigo-700">
-                    Based on <strong>{employee.name}'s</strong> department (<strong>{employee.department}</strong>) and role (<strong>{employee.role.replace(/_/g, ' ')}</strong>), 
-                    we've automatically selected <strong>{autoSelectedResources.physical.length + autoSelectedResources.software.length + autoSelectedResources.cloud.length} essential resources</strong>. 
-                    You can modify this selection by checking or unchecking items below.
-                  </div>
-                  <div className="mt-2 text-xs text-indigo-600">
-                    💡 Auto-selected resources are marked with badges and can be customized as needed.
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Resource Categories */}
           {resources.length === 0 ? (
             // Empty state when no resources exist
@@ -511,33 +393,51 @@ export default function AssignResourcesPage() {
                 </div>
                 <div className="p-6 max-h-96 overflow-y-auto">
                   <div className="space-y-3">
-                    {getResourcesByType('PHYSICAL').map((resource) => (
-                      <div key={resource.id} className="flex items-center">
-                        <input
-                          type="checkbox"
-                          id={`physical-${resource.id}`}
-                          checked={selectedResources.physical.includes(resource.id)}
-                          onChange={() => handleResourceToggle(resource.id, 'physical')}
-                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                        />
-                        <label htmlFor={`physical-${resource.id}`} className="ml-3 flex-1 cursor-pointer">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="text-sm font-medium text-gray-900">{resource.name}</div>
-                              <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
-                              {resource.description && (
-                                <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
-                              )}
+                    {getResourcesByType('PHYSICAL').map((resource) => {
+                      const allocationStatus = canAllocateResource(resource);
+                      const allocationType = resource.allocationType || 'EXCLUSIVE';
+                      return (
+                        <div key={resource.id} className={`flex items-start ${!allocationStatus.canAllocate ? 'opacity-60' : ''}`}>
+                          <input
+                            type="checkbox"
+                            id={`physical-${resource.id}`}
+                            checked={selectedResources.physical.includes(resource.id)}
+                            onChange={() => handleResourceToggle(resource.id, 'physical')}
+                            disabled={!allocationStatus.canAllocate}
+                            className="h-4 w-4 mt-1 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:cursor-not-allowed"
+                          />
+                          <label htmlFor={`physical-${resource.id}`} className={`ml-3 flex-1 ${allocationStatus.canAllocate ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium text-gray-900">{resource.name}</span>
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+                                    allocationType === 'SHARED' 
+                                      ? 'bg-purple-100 text-purple-700' 
+                                      : 'bg-gray-100 text-gray-600'
+                                  }`}>
+                                    {allocationType === 'SHARED' ? '👥 Shared' : '👤 Exclusive'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
+                                <div className="text-xs text-gray-400 mt-0.5">{getAllocationInfo(resource)}</div>
+                                {resource.description && (
+                                  <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
+                                )}
+                                {!allocationStatus.canAllocate && (
+                                  <div className="flex items-center mt-1 text-xs text-red-600">
+                                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                    </svg>
+                                    {allocationStatus.reason}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            {autoSelectedResources.physical.includes(resource.id) && (
-                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                                Auto-selected
-                              </span>
-                            )}
-                          </div>
-                        </label>
-                      </div>
-                    ))}
+                          </label>
+                        </div>
+                      );
+                    })}
                     {getResourcesByType('PHYSICAL').length === 0 && (
                       <p className="text-sm text-gray-500 text-center py-4">No physical resources available</p>
                     )}
@@ -567,33 +467,51 @@ export default function AssignResourcesPage() {
                 </div>
                 <div className="p-6 max-h-96 overflow-y-auto">
                   <div className="space-y-3">
-                    {getResourcesByType('SOFTWARE').map((resource) => (
-                      <div key={resource.id} className="flex items-center">
-                        <input
-                          type="checkbox"
-                          id={`software-${resource.id}`}
-                          checked={selectedResources.software.includes(resource.id)}
-                          onChange={() => handleResourceToggle(resource.id, 'software')}
-                          className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
-                        />
-                        <label htmlFor={`software-${resource.id}`} className="ml-3 flex-1 cursor-pointer">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="text-sm font-medium text-gray-900">{resource.name}</div>
-                              <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
-                              {resource.description && (
-                                <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
-                              )}
+                    {getResourcesByType('SOFTWARE').map((resource) => {
+                      const allocationStatus = canAllocateResource(resource);
+                      const allocationType = resource.allocationType || 'EXCLUSIVE';
+                      return (
+                        <div key={resource.id} className={`flex items-start ${!allocationStatus.canAllocate ? 'opacity-60' : ''}`}>
+                          <input
+                            type="checkbox"
+                            id={`software-${resource.id}`}
+                            checked={selectedResources.software.includes(resource.id)}
+                            onChange={() => handleResourceToggle(resource.id, 'software')}
+                            disabled={!allocationStatus.canAllocate}
+                            className="h-4 w-4 mt-1 text-green-600 focus:ring-green-500 border-gray-300 rounded disabled:cursor-not-allowed"
+                          />
+                          <label htmlFor={`software-${resource.id}`} className={`ml-3 flex-1 ${allocationStatus.canAllocate ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium text-gray-900">{resource.name}</span>
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+                                    allocationType === 'SHARED' 
+                                      ? 'bg-purple-100 text-purple-700' 
+                                      : 'bg-gray-100 text-gray-600'
+                                  }`}>
+                                    {allocationType === 'SHARED' ? '👥 Shared' : '👤 Exclusive'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
+                                <div className="text-xs text-gray-400 mt-0.5">{getAllocationInfo(resource)}</div>
+                                {resource.description && (
+                                  <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
+                                )}
+                                {!allocationStatus.canAllocate && (
+                                  <div className="flex items-center mt-1 text-xs text-red-600">
+                                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                    </svg>
+                                    {allocationStatus.reason}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            {autoSelectedResources.software.includes(resource.id) && (
-                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                                Auto-selected
-                              </span>
-                            )}
-                          </div>
-                        </label>
-                      </div>
-                    ))}
+                          </label>
+                        </div>
+                      );
+                    })}
                     {getResourcesByType('SOFTWARE').length === 0 && (
                       <p className="text-sm text-gray-500 text-center py-4">No software resources available</p>
                     )}
@@ -623,33 +541,51 @@ export default function AssignResourcesPage() {
                 </div>
                 <div className="p-6 max-h-96 overflow-y-auto">
                   <div className="space-y-3">
-                    {getResourcesByType('CLOUD').map((resource) => (
-                      <div key={resource.id} className="flex items-center">
-                        <input
-                          type="checkbox"
-                          id={`cloud-${resource.id}`}
-                          checked={selectedResources.cloud.includes(resource.id)}
-                          onChange={() => handleResourceToggle(resource.id, 'cloud')}
-                          className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
-                        />
-                        <label htmlFor={`cloud-${resource.id}`} className="ml-3 flex-1 cursor-pointer">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="text-sm font-medium text-gray-900">{resource.name}</div>
-                              <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
-                              {resource.description && (
-                                <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
-                              )}
+                    {getResourcesByType('CLOUD').map((resource) => {
+                      const allocationStatus = canAllocateResource(resource);
+                      const allocationType = resource.allocationType || 'EXCLUSIVE';
+                      return (
+                        <div key={resource.id} className={`flex items-start ${!allocationStatus.canAllocate ? 'opacity-60' : ''}`}>
+                          <input
+                            type="checkbox"
+                            id={`cloud-${resource.id}`}
+                            checked={selectedResources.cloud.includes(resource.id)}
+                            onChange={() => handleResourceToggle(resource.id, 'cloud')}
+                            disabled={!allocationStatus.canAllocate}
+                            className="h-4 w-4 mt-1 text-purple-600 focus:ring-purple-500 border-gray-300 rounded disabled:cursor-not-allowed"
+                          />
+                          <label htmlFor={`cloud-${resource.id}`} className={`ml-3 flex-1 ${allocationStatus.canAllocate ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium text-gray-900">{resource.name}</span>
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+                                    allocationType === 'SHARED' 
+                                      ? 'bg-purple-100 text-purple-700' 
+                                      : 'bg-gray-100 text-gray-600'
+                                  }`}>
+                                    {allocationType === 'SHARED' ? '👥 Shared' : '👤 Exclusive'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-500">{resource.category} • {resource.permissionLevel}</div>
+                                <div className="text-xs text-gray-400 mt-0.5">{getAllocationInfo(resource)}</div>
+                                {resource.description && (
+                                  <div className="text-xs text-gray-400 mt-1">{resource.description}</div>
+                                )}
+                                {!allocationStatus.canAllocate && (
+                                  <div className="flex items-center mt-1 text-xs text-red-600">
+                                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                    </svg>
+                                    {allocationStatus.reason}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            {autoSelectedResources.cloud.includes(resource.id) && (
-                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
-                                Auto-selected
-                              </span>
-                            )}
-                          </div>
-                        </label>
-                      </div>
-                    ))}
+                          </label>
+                        </div>
+                      );
+                    })}
                     {getResourcesByType('CLOUD').length === 0 && (
                       <p className="text-sm text-gray-500 text-center py-4">No cloud resources available</p>
                     )}

@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient, AssignmentType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { getUserFromToken } from '@/lib/auth';
 import { 
   createAssignment, 
   determineAssignmentType,
   canAssignHardwareItem,
-  getAvailableLicenseCount
+  getAvailableLicenseCount,
+  getSharedResourceCapacity
 } from '@/lib/resourceAssignmentService';
+import { AssignmentType, AllocationType } from '@/types/resource-structure';
 
 const prisma = new PrismaClient();
 
@@ -14,12 +16,16 @@ const prisma = new PrismaClient();
  * POST /api/resources/assignments/assign - Create resource assignment (after approval)
  * 
  * This endpoint is used for creating assignments after approval workflows.
- * It supports type-specific assignment models:
+ * It supports allocation-type-aware assignment models:
+ * - EXCLUSIVE allocation: Each employee gets their own item (one-to-one)
+ * - SHARED allocation: Multiple employees can share the same resource
+ * 
+ * Also supports type-specific assignment models:
  * - Hardware (PHYSICAL): Requires itemId, exclusive assignment
  * - Software: Supports INDIVIDUAL or POOLED assignment types
  * - Cloud: SHARED assignment, multiple users can access
  * 
- * Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8
+ * Requirements: 2.1, 2.2, 3.1, 3.4, 3.5, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8
  */
 export async function POST(request: NextRequest) {
   try {
@@ -68,6 +74,9 @@ export async function POST(request: NextRequest) {
         items: {
           where: { status: 'AVAILABLE' },
           orderBy: { createdAt: 'asc' }
+        },
+        assignments: {
+          where: { status: 'ACTIVE' }
         }
       }
     });
@@ -80,16 +89,55 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Resource is not active' }, { status: 400 });
     }
 
-    // Check if resource has any items - resources without items cannot be assigned
-    const totalItems = await prisma.resourceItem.count({
-      where: { resourceId }
-    });
+    // Get allocation type (default to EXCLUSIVE for backward compatibility)
+    const allocationType: AllocationType = (resource.allocationType as AllocationType) || 'EXCLUSIVE';
 
-    if (totalItems === 0) {
-      return NextResponse.json(
-        { error: 'Cannot assign resource: No items have been added to this resource yet. Please add items first.' },
-        { status: 400 }
+    // For EXCLUSIVE resources, check if resource has any items
+    if (allocationType === 'EXCLUSIVE') {
+      const totalItems = await prisma.resourceItem.count({
+        where: { resourceId }
+      });
+
+      if (totalItems === 0) {
+        return NextResponse.json(
+          { error: 'Cannot assign resource: No items have been added to this resource yet. Please add items first.' },
+          { status: 400 }
+        );
+      }
+    }
+
+    // For SHARED resources, check capacity
+    // Requirements: 3.4, 3.5
+    if (allocationType === 'SHARED') {
+      const capacityInfo = await getSharedResourceCapacity(resourceId);
+      
+      if (!capacityInfo.isUnlimited && capacityInfo.remainingCapacity <= 0) {
+        return NextResponse.json(
+          { 
+            error: 'This resource has reached its maximum capacity',
+            code: 'CAPACITY_REACHED',
+            allocationType,
+            currentAssignments: capacityInfo.currentAssignments,
+            maxCapacity: capacityInfo.maxCapacity
+          },
+          { status: 400 }
+        );
+      }
+
+      // Check if employee already has access to this shared resource
+      const existingAssignment = resource.assignments.find(
+        (a: any) => a.employeeId === employeeId && a.status === 'ACTIVE'
       );
+      if (existingAssignment) {
+        return NextResponse.json(
+          { 
+            error: 'Employee already has access to this shared resource',
+            code: 'ALREADY_ASSIGNED',
+            allocationType
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // Determine the appropriate assignment type based on resource type
@@ -99,41 +147,61 @@ export async function POST(request: NextRequest) {
       assignmentType as AssignmentType | undefined
     );
 
-    // For hardware resources, validate or auto-select item
+    // For EXCLUSIVE allocation, validate or auto-select item
+    // Requirements: 2.1, 2.2
     let selectedItemId = itemId;
     const normalizedType = resourceTypeName.toUpperCase();
     
-    if (normalizedType === 'HARDWARE' || normalizedType === 'PHYSICAL') {
-      if (itemId) {
-        // Validate the specific item can be assigned
-        const canAssign = await canAssignHardwareItem(itemId);
-        if (!canAssign.canAssign) {
-          return NextResponse.json({ error: canAssign.reason }, { status: 400 });
+    if (allocationType === 'EXCLUSIVE') {
+      // EXCLUSIVE resources require item selection
+      if (normalizedType === 'HARDWARE' || normalizedType === 'PHYSICAL') {
+        if (itemId) {
+          // Validate the specific item can be assigned
+          const canAssign = await canAssignHardwareItem(itemId);
+          if (!canAssign.canAssign) {
+            return NextResponse.json({ 
+              error: canAssign.reason,
+              code: 'ITEM_ALREADY_ASSIGNED',
+              allocationType
+            }, { status: 400 });
+          }
+        } else {
+          // Auto-select first available item for hardware
+          if (resource.items.length === 0) {
+            return NextResponse.json(
+              { 
+                error: 'No available items for this hardware resource',
+                code: 'NO_AVAILABLE_ITEMS',
+                allocationType
+              },
+              { status: 400 }
+            );
+          }
+          selectedItemId = resource.items[0].id;
         }
-      } else {
-        // Auto-select first available item for hardware
-        if (resource.items.length === 0) {
+      } else if (normalizedType === 'SOFTWARE' && resolvedAssignmentType === 'INDIVIDUAL') {
+        // For individual software assignment, auto-select item if not provided
+        if (!itemId && resource.items.length > 0) {
+          selectedItemId = resource.items[0].id;
+        }
+      } else if (normalizedType === 'SOFTWARE' && resolvedAssignmentType === 'POOLED') {
+        // For pooled software, check license availability
+        const licenseInfo = await getAvailableLicenseCount(resourceId);
+        if (licenseInfo.available <= 0 && !licenseInfo.unlimited) {
           return NextResponse.json(
-            { error: 'No available items for this hardware resource' },
+            { 
+              error: `No available licenses. ${licenseInfo.used}/${licenseInfo.total} licenses in use.`,
+              code: 'CAPACITY_REACHED',
+              allocationType
+            },
             { status: 400 }
           );
         }
-        selectedItemId = resource.items[0].id;
       }
-    } else if (normalizedType === 'SOFTWARE' && resolvedAssignmentType === 'INDIVIDUAL') {
-      // For individual software assignment, auto-select item if not provided
-      if (!itemId && resource.items.length > 0) {
-        selectedItemId = resource.items[0].id;
-      }
-    } else if (normalizedType === 'SOFTWARE' && resolvedAssignmentType === 'POOLED') {
-      // For pooled software, check license availability
-      const licenseInfo = await getAvailableLicenseCount(resourceId);
-      if (licenseInfo.available <= 0) {
-        return NextResponse.json(
-          { error: `No available licenses. ${licenseInfo.used}/${licenseInfo.total} licenses in use.` },
-          { status: 400 }
-        );
-      }
+    } else if (allocationType === 'SHARED') {
+      // SHARED resources don't require item selection
+      // Requirements: 3.1
+      selectedItemId = undefined;
     }
 
     // Create assignment using the service
@@ -149,7 +217,11 @@ export async function POST(request: NextRequest) {
     );
 
     if (!result.success) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ 
+        error: result.error,
+        code: result.errorCode,
+        allocationType
+      }, { status: 400 });
     }
 
     // Update approval workflow status if provided
@@ -208,6 +280,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ...result.assignment,
       assignmentType: resolvedAssignmentType,
+      allocationType,
     }, { status: 201 });
 
   } catch (error) {

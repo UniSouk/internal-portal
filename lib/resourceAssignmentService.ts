@@ -1,21 +1,26 @@
 /**
  * Resource Assignment Service
  * 
- * Provides operations for resource assignment management with type-specific models:
+ * Provides operations for resource assignment management with allocation-type-aware models:
+ * - EXCLUSIVE allocation: Each employee gets their own item (one-to-one assignment)
+ * - SHARED allocation: Multiple employees can share the same resource (many-to-one)
+ * 
+ * Also supports type-specific assignment models:
  * - Hardware: Exclusive assignment (one item per user at a time)
  * - Software: Supports both individual and pooled assignment models
  * - Cloud: Shared assignment (multiple users can access the same resource)
  * 
- * Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 11.3
+ * Requirements: 2.1, 2.2, 3.1, 3.4, 3.5, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 11.3
  */
 
-import { PrismaClient, AssignmentType, AssignmentStatus } from '@prisma/client';
+import { PrismaClient, AssignmentStatus } from '@prisma/client';
 import { 
   CreateAssignmentRequest,
   UpdateAssignmentRequest,
   ResourceAssignment,
+  AssignmentType,
+  AllocationType,
 } from '../types/resource-structure';
-import { logAssignmentCreated, logAssignmentStatusChanged, logAssignmentRevoked } from './resourceStructureAudit';
 
 const prisma = new PrismaClient();
 
@@ -25,7 +30,11 @@ const prisma = new PrismaClient();
 export interface AssignmentValidationResult {
   isValid: boolean;
   error?: string;
+  errorCode?: string;
   suggestedAssignmentType?: AssignmentType;
+  allocationType?: AllocationType;
+  currentAssignments?: number;
+  maxCapacity?: number;
 }
 
 /**
@@ -35,6 +44,7 @@ export interface AssignmentResult {
   success: boolean;
   assignment?: ResourceAssignment;
   error?: string;
+  errorCode?: string;
 }
 
 /**
@@ -68,13 +78,13 @@ export function determineAssignmentType(
 }
 
 /**
- * Validates an assignment request based on resource type rules
- * Requirements: 10.1, 10.3, 10.5
+ * Validates an assignment request based on resource allocation type and type rules
+ * Requirements: 2.1, 2.2, 3.1, 3.4, 3.5, 10.1, 10.3, 10.5
  */
 export async function validateAssignmentRequest(
   request: CreateAssignmentRequest
 ): Promise<AssignmentValidationResult> {
-  // Get resource with type information
+  // Get resource with type information and allocation type
   const resource = await prisma.resource.findUnique({
     where: { id: request.resourceId },
     include: {
@@ -89,11 +99,11 @@ export async function validateAssignmentRequest(
   });
 
   if (!resource) {
-    return { isValid: false, error: 'Resource not found' };
+    return { isValid: false, error: 'Resource not found', errorCode: 'RESOURCE_NOT_FOUND' };
   }
 
   if (resource.status !== 'ACTIVE') {
-    return { isValid: false, error: 'Resource is not active' };
+    return { isValid: false, error: 'Resource is not active', errorCode: 'RESOURCE_INACTIVE' };
   }
 
   // Validate employee exists
@@ -102,17 +112,34 @@ export async function validateAssignmentRequest(
   });
 
   if (!employee) {
-    return { isValid: false, error: 'Employee not found' };
+    return { isValid: false, error: 'Employee not found', errorCode: 'EMPLOYEE_NOT_FOUND' };
   }
 
   // Get resource type name (from new entity or legacy type)
   const resourceTypeName = resource.resourceTypeEntity?.name || resource.type;
-  const normalizedType = resourceTypeName.toUpperCase();
 
   // Determine the appropriate assignment type
   const suggestedAssignmentType = determineAssignmentType(resourceTypeName, request.assignmentType);
 
-  // Type-specific validation
+  // Get allocation type (default to EXCLUSIVE for backward compatibility)
+  const allocationType: AllocationType = (resource.allocationType as AllocationType) || 'EXCLUSIVE';
+
+  // Validate based on allocation type first (new allocation-type-aware validation)
+  // Requirements: 2.1, 2.2, 3.1, 3.4, 3.5
+  const allocationValidation = validateAllocationTypeConstraints(
+    resource,
+    request,
+    allocationType,
+    suggestedAssignmentType
+  );
+
+  if (!allocationValidation.isValid) {
+    return allocationValidation;
+  }
+
+  // Then apply type-specific validation (legacy type-based validation)
+  const normalizedType = resourceTypeName.toUpperCase();
+
   switch (normalizedType) {
     case 'HARDWARE':
     case 'PHYSICAL':
@@ -125,9 +152,115 @@ export async function validateAssignmentRequest(
       return validateCloudAssignment(resource, request, suggestedAssignmentType);
     
     default:
-      // For custom types, use default validation
-      return { isValid: true, suggestedAssignmentType };
+      // For custom types, use allocation-type-based validation
+      return { isValid: true, suggestedAssignmentType, allocationType };
   }
+}
+
+/**
+ * Validates assignment based on allocation type constraints
+ * Requirements: 2.1, 2.2, 3.1, 3.4, 3.5
+ */
+function validateAllocationTypeConstraints(
+  resource: any,
+  request: CreateAssignmentRequest,
+  allocationType: AllocationType,
+  suggestedAssignmentType: AssignmentType
+): AssignmentValidationResult {
+  const activeAssignments = resource.assignments?.filter((a: any) => a.status === 'ACTIVE') || [];
+  const activeAssignmentCount = activeAssignments.length;
+
+  if (allocationType === 'EXCLUSIVE') {
+    // EXCLUSIVE allocation: Each employee gets their own item (one-to-one)
+    // Requirements: 2.1, 2.2
+
+    // For EXCLUSIVE resources, itemId is required
+    if (!request.itemId) {
+      // Check if there are available items
+      if (resource.items.length === 0) {
+        return {
+          isValid: false,
+          error: 'No available items for this exclusive resource. All items are assigned or unavailable.',
+          errorCode: 'NO_AVAILABLE_ITEMS',
+          suggestedAssignmentType,
+          allocationType,
+        };
+      }
+      return {
+        isValid: false,
+        error: 'Item selection is required for exclusive resources',
+        errorCode: 'ITEM_REQUIRED',
+        suggestedAssignmentType,
+        allocationType,
+      };
+    }
+
+    // Check if the specific item is already assigned (prevent double-assignment)
+    // Requirements: 2.2
+    const existingItemAssignment = activeAssignments.find(
+      (a: any) => a.itemId === request.itemId
+    );
+    if (existingItemAssignment) {
+      return {
+        isValid: false,
+        error: 'This item is already assigned to another employee',
+        errorCode: 'ITEM_ALREADY_ASSIGNED',
+        suggestedAssignmentType,
+        allocationType,
+      };
+    }
+
+    // Verify the item exists and is available
+    const item = resource.items.find((i: any) => i.id === request.itemId);
+    if (!item) {
+      return {
+        isValid: false,
+        error: 'The specified item is not available for assignment. It may already be assigned or in maintenance.',
+        errorCode: 'ITEM_NOT_AVAILABLE',
+        suggestedAssignmentType,
+        allocationType,
+      };
+    }
+
+  } else if (allocationType === 'SHARED') {
+    // SHARED allocation: Multiple employees can share the same resource
+    // Requirements: 3.1, 3.4, 3.5
+
+    // Check if employee already has access to this shared resource
+    const existingEmployeeAssignment = activeAssignments.find(
+      (a: any) => a.employeeId === request.employeeId
+    );
+    if (existingEmployeeAssignment) {
+      return {
+        isValid: false,
+        error: 'Employee already has access to this shared resource',
+        errorCode: 'ALREADY_ASSIGNED',
+        suggestedAssignmentType,
+        allocationType,
+      };
+    }
+
+    // Check capacity for SHARED resources
+    // Requirements: 3.4, 3.5
+    const quantity = resource.quantity;
+    
+    // quantity = -1 means unlimited capacity
+    if (quantity !== -1 && quantity !== null && quantity !== undefined) {
+      if (activeAssignmentCount >= quantity) {
+        return {
+          isValid: false,
+          error: 'This resource has reached its maximum capacity',
+          errorCode: 'CAPACITY_REACHED',
+          suggestedAssignmentType,
+          allocationType,
+          currentAssignments: activeAssignmentCount,
+          maxCapacity: quantity,
+        };
+      }
+    }
+  }
+
+  return { isValid: true, suggestedAssignmentType, allocationType };
 }
 
 /**
@@ -312,8 +445,8 @@ function validateCloudAssignment(
 }
 
 /**
- * Creates a new resource assignment with type-specific logic
- * Requirements: 10.1, 10.2, 10.3, 10.4
+ * Creates a new resource assignment with allocation-type-aware logic
+ * Requirements: 2.1, 2.2, 3.1, 3.4, 3.5, 10.1, 10.2, 10.3, 10.4
  */
 export async function createAssignment(
   request: CreateAssignmentRequest,
@@ -323,7 +456,11 @@ export async function createAssignment(
   const validation = await validateAssignmentRequest(request);
   
   if (!validation.isValid) {
-    return { success: false, error: validation.error };
+    return { 
+      success: false, 
+      error: validation.error,
+      errorCode: validation.errorCode,
+    };
   }
 
   const assignmentType = validation.suggestedAssignmentType || request.assignmentType || 'INDIVIDUAL';
@@ -347,7 +484,7 @@ export async function createAssignment(
             select: { id: true, name: true, email: true, department: true },
           },
           resource: {
-            select: { id: true, name: true, type: true, category: true },
+            select: { id: true, name: true, type: true, category: true, allocationType: true },
           },
           item: {
             select: { id: true, serialNumber: true, hostname: true, licenseKey: true },
@@ -375,6 +512,7 @@ export async function createAssignment(
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Failed to create assignment',
+      errorCode: 'ASSIGNMENT_CREATION_FAILED',
     };
   }
 }
@@ -404,7 +542,7 @@ export async function updateAssignmentStatus(
     });
 
     if (!existing) {
-      return { success: false, error: 'Assignment not found' };
+      return { success: false, error: 'Assignment not found', errorCode: 'ASSIGNMENT_NOT_FOUND' };
     }
 
     // Validate status transition
@@ -422,6 +560,7 @@ export async function updateAssignmentStatus(
       return { 
         success: false, 
         error: `Cannot transition from ${currentStatus} to ${newStatus}`,
+        errorCode: 'INVALID_STATUS_TRANSITION',
       };
     }
 
@@ -519,6 +658,7 @@ export async function updateAssignmentStatus(
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Failed to update assignment',
+      errorCode: 'UPDATE_FAILED',
     };
   }
 }
@@ -580,7 +720,7 @@ export async function getAssignmentById(id: string): Promise<ResourceAssignment 
         select: { id: true, name: true, email: true, department: true },
       },
       resource: {
-        select: { id: true, name: true, type: true, category: true },
+        select: { id: true, name: true, type: true, category: true, allocationType: true },
       },
       item: {
         select: { id: true, serialNumber: true, hostname: true, licenseKey: true },
@@ -621,7 +761,7 @@ export async function getAssignments(options: {
           select: { id: true, name: true, email: true, department: true },
         },
         resource: {
-          select: { id: true, name: true, type: true, category: true },
+          select: { id: true, name: true, type: true, category: true, allocationType: true },
         },
         item: {
           select: { id: true, serialNumber: true, hostname: true, licenseKey: true },
@@ -640,7 +780,7 @@ export async function getAssignments(options: {
 
 /**
  * Checks if a hardware item can be assigned (not already assigned)
- * Requirements: 10.5 - Prevent assignment of the same item to another user until returned
+ * Requirements: 2.2, 10.5 - Prevent assignment of the same item to another user until returned
  */
 export async function canAssignHardwareItem(itemId: string): Promise<{ canAssign: boolean; reason?: string }> {
   const item = await prisma.resourceItem.findUnique({
@@ -673,17 +813,16 @@ export async function canAssignHardwareItem(itemId: string): Promise<{ canAssign
 }
 
 /**
- * Gets available license count for pooled software
- * Requirements: 10.6 - Track license usage without requiring specific item assignment
+ * Gets available license count for pooled software or shared resources
+ * Requirements: 3.4, 3.5, 10.6 - Track license usage without requiring specific item assignment
  */
-export async function getAvailableLicenseCount(resourceId: string): Promise<{ available: number; total: number; used: number }> {
+export async function getAvailableLicenseCount(resourceId: string): Promise<{ available: number; total: number; used: number; unlimited: boolean }> {
   const resource = await prisma.resource.findUnique({
     where: { id: resourceId },
     include: {
       assignments: {
         where: { 
           status: 'ACTIVE',
-          assignmentType: 'POOLED',
         },
       },
     },
@@ -693,11 +832,53 @@ export async function getAvailableLicenseCount(resourceId: string): Promise<{ av
     throw new Error('Resource not found');
   }
 
-  const total = resource.quantity || 1;
+  const total = resource.quantity ?? 1;
   const used = resource.assignments.length;
+  
+  // quantity = -1 means unlimited
+  if (total === -1) {
+    return { available: Number.MAX_SAFE_INTEGER, total: -1, used, unlimited: true };
+  }
+  
   const available = Math.max(0, total - used);
 
-  return { available, total, used };
+  return { available, total, used, unlimited: false };
+}
+
+/**
+ * Gets the remaining capacity for a shared resource
+ * Requirements: 3.4, 3.5
+ */
+export async function getSharedResourceCapacity(resourceId: string): Promise<{
+  currentAssignments: number;
+  maxCapacity: number;
+  remainingCapacity: number;
+  isUnlimited: boolean;
+}> {
+  const resource = await prisma.resource.findUnique({
+    where: { id: resourceId },
+    include: {
+      assignments: {
+        where: { status: 'ACTIVE' },
+      },
+    },
+  });
+
+  if (!resource) {
+    throw new Error('Resource not found');
+  }
+
+  const currentAssignments = resource.assignments.length;
+  const maxCapacity = resource.quantity ?? 1;
+  const isUnlimited = maxCapacity === -1;
+  const remainingCapacity = isUnlimited ? Number.MAX_SAFE_INTEGER : Math.max(0, maxCapacity - currentAssignments);
+
+  return {
+    currentAssignments,
+    maxCapacity,
+    remainingCapacity,
+    isUnlimited,
+  };
 }
 
 /**

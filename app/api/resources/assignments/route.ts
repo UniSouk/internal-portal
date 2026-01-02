@@ -6,7 +6,7 @@ import {
   validateAssignmentRequest,
   determineAssignmentType 
 } from '@/lib/resourceAssignmentService';
-import { AssignmentType } from '@/types/resource-structure';
+import { AssignmentType, AllocationType } from '@/types/resource-structure';
 import {
   normalizeAssignment,
   determineAssignmentTypeFromLegacy
@@ -17,12 +17,16 @@ const prisma = new PrismaClient();
 /**
  * POST /api/resources/assignments - Create a new resource assignment
  * 
- * Supports type-specific assignment models:
+ * Supports allocation-type-aware assignment models:
+ * - EXCLUSIVE allocation: Each employee gets their own item (one-to-one)
+ * - SHARED allocation: Multiple employees can share the same resource
+ * 
+ * Also supports type-specific assignment models:
  * - Hardware (PHYSICAL): Requires itemId, exclusive assignment
  * - Software: Supports INDIVIDUAL or POOLED assignment types
  * - Cloud: SHARED assignment, multiple users can access
  * 
- * Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8
+ * Requirements: 2.1, 2.2, 3.1, 3.4, 3.5, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8
  */
 export async function POST(request: NextRequest) {
   try {
@@ -47,7 +51,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Get resource to determine type-specific assignment model
+    // Get resource to determine type-specific assignment model and allocation type
     const resource = await prisma.resource.findUnique({
       where: { id: resourceId },
       include: {
@@ -59,6 +63,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Resource not found' }, { status: 404 });
     }
 
+    // Get allocation type (default to EXCLUSIVE for backward compatibility)
+    const allocationType: AllocationType = (resource.allocationType as AllocationType) || 'EXCLUSIVE';
+
     // Determine the appropriate assignment type based on resource type
     const resourceTypeName = resource.resourceTypeEntity?.name || resource.type;
     const resolvedAssignmentType = determineAssignmentType(
@@ -66,7 +73,7 @@ export async function POST(request: NextRequest) {
       assignmentType as AssignmentType | undefined
     );
 
-    // Create assignment using the service
+    // Create assignment using the service (validation is done inside)
     const result = await createAssignment(
       {
         resourceId,
@@ -80,7 +87,9 @@ export async function POST(request: NextRequest) {
 
     if (!result.success) {
       return NextResponse.json({ 
-        error: result.error 
+        error: result.error,
+        code: result.errorCode,
+        allocationType
       }, { status: 400 });
     }
 
@@ -89,6 +98,7 @@ export async function POST(request: NextRequest) {
       message: 'Resource assigned successfully',
       assignment: result.assignment,
       assignmentType: resolvedAssignmentType,
+      allocationType,
     });
 
   } catch (error) {
@@ -146,6 +156,7 @@ export async function GET(request: NextRequest) {
             name: true, 
             type: true, 
             category: true,
+            allocationType: true,
             resourceTypeEntity: {
               select: { id: true, name: true }
             }

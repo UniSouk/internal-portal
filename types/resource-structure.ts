@@ -102,6 +102,13 @@ export interface PropertyCatalogWithType extends PropertyCatalog {
 export type AssignmentType = 'INDIVIDUAL' | 'POOLED' | 'SHARED';
 
 /**
+ * Allocation type for resources
+ * EXCLUSIVE: Each employee gets their own item (one-to-one)
+ * SHARED: Multiple employees can share the same resource (one-to-many)
+ */
+export type AllocationType = 'EXCLUSIVE' | 'SHARED';
+
+/**
  * Assignment status values
  */
 export type AssignmentStatus = 'ACTIVE' | 'RETURNED' | 'LOST' | 'DAMAGED';
@@ -143,6 +150,10 @@ export interface EnhancedResource {
   custodianId: string;
   status: ResourceStatus;
   quantity?: number;
+  
+  // Allocation type: EXCLUSIVE (one per employee) or SHARED (multiple employees)
+  allocationType: AllocationType;
+  
   metadata?: Record<string, unknown>;
   
   // Property schema (locked after first item)

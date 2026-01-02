@@ -131,6 +131,9 @@ model Resource {
   // Quantity for Cloud resources (unlimited = 999999)
   quantity      Int? @default(1)
   
+  // Allocation type: EXCLUSIVE (one per employee) or SHARED (multiple employees)
+  allocationType AllocationType @default(EXCLUSIVE)
+  
   // Flexible metadata for Software/Cloud specifications
   metadata      Json?
 
@@ -483,6 +486,11 @@ enum AssignmentStatus {
 enum AssignmentType {
   INDIVIDUAL
   POOLED
+  SHARED
+}
+
+enum AllocationType {
+  EXCLUSIVE
   SHARED
 }
 

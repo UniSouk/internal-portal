@@ -8,7 +8,8 @@ import { Plus, X, Loader2 } from 'lucide-react';
 import { 
   PropertyDefinition, 
   ResourceTypeEntity, 
-  ResourceCategoryEntity 
+  ResourceCategoryEntity,
+  AllocationType
 } from '@/types/resource-structure';
 
 interface ResourceCatalog {
@@ -30,6 +31,8 @@ interface ResourceCatalog {
   propertySchema?: PropertyDefinition[];
   schemaLocked?: boolean;
   items?: any[]; // Items array to check if schema can be edited
+  allocationType?: AllocationType;
+  quantity?: number;
 }
 
 interface Employee {
@@ -79,7 +82,8 @@ export default function ResourceCatalogForm({
     description: '',
     custodianId: user?.id || '',
     status: 'ACTIVE',
-    quantity: 1,
+    quantity: -1, // Default to unlimited for SHARED allocation
+    allocationType: 'EXCLUSIVE' as AllocationType,
     metadata: {} as Record<string, string>,
     // New fields for enhanced resource structure
     resourceTypeId: '',
@@ -93,6 +97,9 @@ export default function ResourceCatalogForm({
 
   // Get selected resource type name for PropertySelector
   const selectedTypeName = resourceTypes.find(t => t.id === formData.resourceTypeId)?.name;
+  
+  // Get mandatory properties for the selected type
+  const selectedTypeMandatoryProperties = resourceTypes.find(t => t.id === formData.resourceTypeId)?.mandatoryProperties || [];
 
   // Fetch resource types from API
   // Requirement 6.1: Provide dropdown menus for type and category selection
@@ -265,7 +272,8 @@ export default function ResourceCatalogForm({
         description: resource.description || '',
         custodianId: resource.custodian.id,
         status: resource.status,
-        quantity: (resource as any).quantity || 1,
+        quantity: resource.quantity ?? -1,
+        allocationType: resource.allocationType || 'EXCLUSIVE',
         metadata: (resource as any).metadata || {},
         resourceTypeId: resource.resourceTypeId || '',
         resourceCategoryId: resource.resourceCategoryId || '',
@@ -330,7 +338,8 @@ export default function ResourceCatalogForm({
         ...formData,
         // Include selected properties for new resource structure
         selectedProperties: selectedProperties,
-        quantity: selectedTypeName === 'Cloud' ? parseInt(formData.quantity.toString()) || 1 : null,
+        quantity: formData.allocationType === 'SHARED' ? formData.quantity : null,
+        allocationType: formData.allocationType,
         metadata: Object.keys(metadata).length > 0 ? metadata : null
       };
 
@@ -604,6 +613,107 @@ export default function ResourceCatalogForm({
                 placeholder="Brief description of the resource..."
               />
             </div>
+
+            {/* Allocation Type Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Allocation Type <span className="text-red-500">*</span>
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleChange('allocationType', 'EXCLUSIVE')}
+                  className={`p-3 rounded-lg border-2 text-left transition-all duration-200 ${
+                    formData.allocationType === 'EXCLUSIVE'
+                      ? 'border-indigo-500 bg-indigo-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-center">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
+                      formData.allocationType === 'EXCLUSIVE' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'
+                    }`}>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 className={`text-sm font-medium ${formData.allocationType === 'EXCLUSIVE' ? 'text-indigo-900' : 'text-gray-900'}`}>
+                        Exclusive
+                      </h4>
+                      <p className="text-xs text-gray-500">One item per employee</p>
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleChange('allocationType', 'SHARED')}
+                  className={`p-3 rounded-lg border-2 text-left transition-all duration-200 ${
+                    formData.allocationType === 'SHARED'
+                      ? 'border-indigo-500 bg-indigo-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-center">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
+                      formData.allocationType === 'SHARED' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'
+                    }`}>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 className={`text-sm font-medium ${formData.allocationType === 'SHARED' ? 'text-indigo-900' : 'text-gray-900'}`}>
+                        Shared
+                      </h4>
+                      <p className="text-xs text-gray-500">Multiple employees can share</p>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Quantity field for SHARED allocation */}
+            {formData.allocationType === 'SHARED' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Quantity / Seats
+                </label>
+                <div className="flex items-center space-x-3">
+                  <div className="flex-1">
+                    <input
+                      type="number"
+                      value={formData.quantity === -1 ? '' : formData.quantity}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? -1 : parseInt(e.target.value);
+                        handleChange('quantity', val);
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      placeholder="Leave empty for unlimited"
+                      min="1"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleChange('quantity', -1)}
+                    className={`px-3 py-2 rounded-lg border-2 text-sm transition-colors ${
+                      formData.quantity === -1
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-gray-300 text-gray-600 hover:border-gray-400'
+                    }`}
+                  >
+                    ∞ Unlimited
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  {formData.quantity === -1 
+                    ? 'Unlimited: No restriction on number of assignments'
+                    : `Limited to ${formData.quantity} concurrent assignments`
+                  }
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Property Selection Section - Requirements 12.1, 12.2, 12.3 */}
@@ -623,6 +733,7 @@ export default function ResourceCatalogForm({
                 onPropertiesChange={setSelectedProperties}
                 resourceTypeId={formData.resourceTypeId}
                 resourceTypeName={selectedTypeName}
+                mandatoryProperties={selectedTypeMandatoryProperties}
                 disabled={!!resource && (resource?.items?.length ?? 0) > 0}
                 error={propertyError || undefined}
               />
@@ -683,25 +794,6 @@ export default function ResourceCatalogForm({
                 placeholder="Select status"
               />
             </div>
-
-            {/* Cloud Quantity Field */}
-            {selectedTypeName === 'Cloud' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Quantity <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  value={formData.quantity}
-                  onChange={(e) => handleChange('quantity', parseInt(e.target.value) || 1)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  placeholder="e.g., 5, 10, 999999 for unlimited"
-                  min="1"
-                  required
-                />
-                <p className="text-xs text-gray-500 mt-1">Number of instances/licenses available (use 999999 for unlimited)</p>
-              </div>
-            )}
           </div>
 
           {/* Cloud Metadata Section */}
@@ -782,7 +874,7 @@ export default function ResourceCatalogForm({
             </button>
             <button
               type="submit"
-              disabled={loading || !formData.name || !formData.custodianId || !formData.resourceTypeId || !formData.resourceCategoryId || (selectedTypeName === 'Cloud' && (!formData.quantity || formData.quantity < 1))}
+              disabled={loading || !formData.name || !formData.custodianId || !formData.resourceTypeId || !formData.resourceCategoryId}
               className="px-6 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? 'Saving...' : resource ? 'Update Resource' : 'Create Resource'}

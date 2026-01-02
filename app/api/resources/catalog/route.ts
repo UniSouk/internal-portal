@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { getUserFromToken } from '@/lib/auth';
-
-const prisma = new PrismaClient();
 
 // GET /api/resources/catalog - List all resource catalog entries
 export async function GET(request: NextRequest) {
@@ -85,20 +83,31 @@ export async function GET(request: NextRequest) {
             select: { id: true, name: true }
           }
         },
-        orderBy: { name: 'asc' }
+        orderBy: { createdAt: 'desc' }
       }),
       prisma.resource.count({ where })
     ]);
 
     // Calculate availability for each resource
-    const resourcesWithAvailability = resources.map(resource => ({
-      ...resource,
-      availability: {
-        total: resource.type === 'CLOUD' ? (resource.quantity || 1) : 1,
-        assigned: resource.assignments.length,
-        available: resource.type === 'CLOUD' ? Math.max(0, (resource.quantity || 1) - resource.assignments.length) : (resource.assignments.length > 0 ? 0 : 1)
-      }
-    }));
+    const resourcesWithAvailability = resources.map(resource => {
+      // For SHARED allocation, use quantity (-1 means unlimited)
+      // For EXCLUSIVE allocation, availability is based on items
+      const isShared = resource.allocationType === 'SHARED';
+      const quantity = resource.quantity ?? -1;
+      const isUnlimited = quantity === -1 || quantity === null;
+      
+      return {
+        ...resource,
+        availability: {
+          total: isShared ? (isUnlimited ? -1 : quantity) : 1,
+          assigned: resource.assignments.length,
+          available: isShared 
+            ? (isUnlimited ? -1 : Math.max(0, quantity - resource.assignments.length))
+            : (resource.assignments.length > 0 ? 0 : 1),
+          isUnlimited: isShared && isUnlimited
+        }
+      };
+    });
 
     return NextResponse.json({
       resources: resourcesWithAvailability,
@@ -118,8 +127,6 @@ export async function GET(request: NextRequest) {
       { error: 'Failed to fetch resource catalog' },
       { status: 500 }
     );
-  } finally {
-    await prisma.$disconnect();
   }
 }
 
@@ -151,6 +158,7 @@ export async function POST(request: NextRequest) {
       custodianId, 
       quantity, 
       metadata,
+      allocationType,
       // New fields for enhanced resource structure
       resourceTypeId,
       resourceCategoryId,
@@ -179,22 +187,27 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Invalid resource type ID' }, { status: 400 });
       }
 
-      // Category is mandatory
-      if (!resourceCategoryId) {
-        return NextResponse.json({ error: 'Resource category is required' }, { status: 400 });
+      // Category is mandatory for EXCLUSIVE allocation, optional for SHARED
+      const isSharedAllocation = allocationType === 'SHARED';
+      
+      if (!isSharedAllocation && !resourceCategoryId) {
+        return NextResponse.json({ error: 'Resource category is required for exclusive allocation resources' }, { status: 400 });
       }
 
-      // Validate category exists and belongs to the selected type
-      const resourceCategory = await prisma.resourceCategoryEntity.findUnique({
-        where: { id: resourceCategoryId }
-      });
+      // Validate category exists and belongs to the selected type (if provided)
+      let resourceCategory = null;
+      if (resourceCategoryId) {
+        resourceCategory = await prisma.resourceCategoryEntity.findUnique({
+          where: { id: resourceCategoryId }
+        });
 
-      if (!resourceCategory) {
-        return NextResponse.json({ error: 'Invalid resource category ID' }, { status: 400 });
-      }
+        if (!resourceCategory) {
+          return NextResponse.json({ error: 'Invalid resource category ID' }, { status: 400 });
+        }
 
-      if (resourceCategory.resourceTypeId !== resourceTypeId) {
-        return NextResponse.json({ error: 'Category does not belong to the selected resource type' }, { status: 400 });
+        if (resourceCategory.resourceTypeId !== resourceTypeId) {
+          return NextResponse.json({ error: 'Category does not belong to the selected resource type' }, { status: 400 });
+        }
       }
 
       // Validate custodian exists
@@ -230,10 +243,11 @@ export async function POST(request: NextRequest) {
             owner: 'Unisouk',
             custodianId,
             status: 'ACTIVE',
-            quantity: legacyType === 'CLOUD' ? (quantity || 1) : null,
+            quantity: allocationType === 'SHARED' ? (quantity ?? -1) : null,
+            allocationType: allocationType || 'EXCLUSIVE',
             metadata: metadata ? JSON.parse(JSON.stringify(metadata)) : null,
             resourceTypeId,
-            resourceCategoryId,
+            resourceCategoryId: resourceCategoryId || null,
             propertySchema: JSON.parse(JSON.stringify(selectedProperties)),
             schemaLocked: false
           },
@@ -257,7 +271,9 @@ export async function POST(request: NextRequest) {
               name,
               type: legacyType,
               resourceTypeId,
-              resourceCategoryId,
+              resourceCategoryId: resourceCategoryId || null,
+              allocationType: allocationType || 'EXCLUSIVE',
+              quantity: allocationType === 'SHARED' ? (quantity ?? -1) : null,
               propertySchemaCount: selectedProperties.length
             }),
             resourceId: newResource.id
@@ -271,15 +287,17 @@ export async function POST(request: NextRequest) {
             entityId: newResource.id,
             activityType: 'CREATED',
             title: `Resource "${name}" created`,
-            description: `New ${resourceType.name} resource created in ${resourceCategory.name} category with ${selectedProperties.length} properties`,
+            description: `New ${resourceType.name} resource created${resourceCategory ? ` in ${resourceCategory.name} category` : ''} with ${selectedProperties.length} properties (${allocationType || 'EXCLUSIVE'} allocation)`,
             performedBy: user.id,
             resourceId: newResource.id,
             metadata: {
               resourceType: resourceType.name,
               resourceTypeId,
-              resourceCategoryId,
-              categoryName: resourceCategory.name,
+              resourceCategoryId: resourceCategoryId || null,
+              categoryName: resourceCategory?.name || null,
               custodian: custodian.name,
+              allocationType: allocationType || 'EXCLUSIVE',
+              quantity: allocationType === 'SHARED' ? (quantity ?? -1) : null,
               propertyCount: selectedProperties.length,
               propertyKeys: selectedProperties.map((p: any) => p.key)
             }
@@ -293,7 +311,8 @@ export async function POST(request: NextRequest) {
         ...resource,
         propertySchema: selectedProperties,
         resourceTypeName: resourceType.name,
-        resourceCategoryName: resourceCategory.name
+        resourceCategoryName: resourceCategory?.name || null,
+        allocationType: allocationType || 'EXCLUSIVE'
       }, { status: 201 });
 
     } else {
@@ -396,7 +415,5 @@ export async function POST(request: NextRequest) {
       { error: 'Failed to create resource' },
       { status: 500 }
     );
-  } finally {
-    await prisma.$disconnect();
   }
 }
